@@ -846,7 +846,8 @@ fn tools() -> Vec<Value> {
                 "selector": { "type": "string", "description": "Scope the snapshot to a CSS selector." },
                 "includeUrls": { "type": "boolean", "default": false, "description": "Include href URLs on links." },
                 "delta": { "type": "boolean", "default": false, "description": "Return full state once, then unchanged or bounded structural deltas. Apply changes to refs and treeChange (zero-based startLine, deleteCount, lines) to the previous tree." },
-                "full": { "type": "boolean", "default": false, "description": "Force full state while updating the delta baseline." }
+                "full": { "type": "boolean", "default": false, "description": "Force full state while updating the delta baseline." },
+                "noRedact": { "type": "boolean", "default": false, "description": "Show password, one-time-code, and card values verbatim. Redaction is on by default." }
             }),
             &[],
         ),
@@ -1612,7 +1613,7 @@ fn parity_tools() -> Vec<Value> {
             TOOL_DIFF_SNAPSHOT,
             "Diff snapshot",
             "Diff current snapshot against last or baseline.",
-            json!({ "baseline": { "type": "string" }, "selector": { "type": "string" }, "compact": { "type": "boolean" }, "depth": { "type": "integer" } }),
+            json!({ "baseline": { "type": "string" }, "selector": { "type": "string" }, "compact": { "type": "boolean" }, "depth": { "type": "integer" }, "noRedact": { "type": "boolean" } }),
             &[],
         ),
         tool(
@@ -2673,6 +2674,9 @@ fn snapshot_command_args(arguments: &Value) -> Result<Vec<String>, ProtocolError
     if optional_bool(arguments, "full")?.unwrap_or(false) {
         args.push("--full".to_string());
     }
+    if optional_bool(arguments, "noRedact")?.unwrap_or(false) {
+        args.push("--no-redact".to_string());
+    }
 
     Ok(args)
 }
@@ -3349,6 +3353,9 @@ fn call_diff_snapshot(arguments: &Value) -> Result<Value, ProtocolError> {
     if let Some(depth) = optional_u64(arguments, "depth")? {
         args.push("--depth".to_string());
         args.push(depth.to_string());
+    }
+    if optional_bool(arguments, "noRedact")?.unwrap_or(false) {
+        args.push("--no-redact".to_string());
     }
     call_cli_tool(arguments, args, None)
 }

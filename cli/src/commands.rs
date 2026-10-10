@@ -999,6 +999,9 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                         obj.insert("full".to_string(), json!(true));
                         obj.insert("delta".to_string(), json!(true));
                     }
+                    "--no-redact" => {
+                        obj.insert("noRedact".to_string(), json!(true));
+                    }
                     _ => {}
                 }
                 i += 1;
@@ -2687,6 +2690,9 @@ fn parse_diff(rest: &[&str], id: &str) -> Result<Value, ParseError> {
                                 usage: "diff snapshot --selector <sel>",
                             });
                         }
+                    }
+                    "--no-redact" => {
+                        obj.insert("noRedact".to_string(), json!(true));
                     }
                     "-c" | "--compact" => {
                         obj.insert("compact".to_string(), json!(true));

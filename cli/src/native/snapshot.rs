@@ -186,6 +186,10 @@ pub struct SnapshotOptions {
     pub compact: bool,
     pub depth: Option<usize>,
     pub urls: bool,
+    /// Show secret-looking values (password/OTP/card fields, one-time codes
+    /// in text) verbatim. Redaction is on by default so credentials typed or
+    /// displayed on a page are not copied into an agent's context.
+    pub no_redact: bool,
 }
 
 struct TreeNode {
@@ -1281,9 +1285,19 @@ fn render_tree(
         &node.name
     };
     if !unescaped_display_name.is_empty() {
-        if let Ok(display_name) =
-            serde_json::to_string(&normalize_snapshot_name(unescaped_display_name))
-        {
+        let normalized = normalize_snapshot_name(unescaped_display_name);
+        // A textbox's value is repeated as its child StaticText, so text
+        // inside a sensitive field is redacted along with the field value.
+        let inside_sensitive_field =
+            role == "StaticText" && has_sensitive_field_ancestor(nodes, node);
+        let shown = if options.no_redact {
+            normalized
+        } else if inside_sensitive_field {
+            REDACTED.to_string()
+        } else {
+            redact_secret_text(&normalized)
+        };
+        if let Ok(display_name) = serde_json::to_string(&shown) {
             line.push_str(&format!(" {}", display_name));
         }
     }
@@ -1340,7 +1354,13 @@ fn render_tree(
     // Value
     if let Some(ref val) = node.value_text {
         if !val.is_empty() && val != &node.name {
-            line.push_str(&format!(": {}", val));
+            if options.no_redact {
+                line.push_str(&format!(": {}", val));
+            } else if is_sensitive_field(role, &node.name) {
+                line.push_str(&format!(": {}", REDACTED));
+            } else {
+                line.push_str(&format!(": {}", redact_secret_text(val)));
+            }
         }
     }
 
@@ -1350,6 +1370,145 @@ fn render_tree(
     for &child in &node.children {
         render_tree(nodes, child, indent + 1, output, options);
     }
+}
+
+const REDACTED: &str = "[redacted]";
+
+/// Words (matched on word boundaries, case-insensitive) that mark a form
+/// field's value as a secret.
+const SENSITIVE_FIELD_TERMS: &[&str] = &[
+    "password",
+    "passcode",
+    "passphrase",
+    "otp",
+    "one-time",
+    "one time",
+    "verification code",
+    "security code",
+    "auth code",
+    "authentication code",
+    "2fa",
+    "mfa",
+    "cvv",
+    "cvc",
+    "csc",
+    "card number",
+    "credit card",
+    "ssn",
+    "social security",
+    "pin",
+    "secret",
+    "api key",
+    "token",
+];
+
+/// Words that, near a run of digits, mark the digits as a one-time code.
+const CODE_CONTEXT_TERMS: &[&str] = &[
+    "code",
+    "otp",
+    "passcode",
+    "verification",
+    "verify",
+    "2fa",
+    "mfa",
+    "one-time",
+    "one time",
+    "pin",
+    "token",
+    "security",
+    "authentication",
+];
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric()
+}
+
+/// Case-insensitive search for `term` in `haystack` on word boundaries.
+fn contains_term(haystack: &str, term: &str) -> bool {
+    let hay = haystack.to_lowercase();
+    let mut start = 0;
+    while let Some(pos) = hay[start..].find(term) {
+        let begin = start + pos;
+        let end = begin + term.len();
+        let before_ok = hay[..begin].chars().next_back().is_none_or(|c| !is_word_char(c));
+        let after_ok = hay[end..].chars().next().is_none_or(|c| !is_word_char(c));
+        if before_ok && after_ok {
+            return true;
+        }
+        start = begin + term.len().max(1);
+        if start >= hay.len() {
+            break;
+        }
+    }
+    false
+}
+
+/// True when a field's role and accessible name identify it as holding a
+/// secret, so its current value must not be rendered.
+fn is_sensitive_field(role: &str, name: &str) -> bool {
+    matches!(role, "textbox" | "searchbox" | "spinbutton" | "combobox")
+        && SENSITIVE_FIELD_TERMS.iter().any(|t| contains_term(name, t))
+}
+
+/// Text rendered inside a field (its value mirror) sits a few levels under
+/// the textbox in Chrome's accessibility tree.
+fn has_sensitive_field_ancestor(nodes: &[TreeNode], node: &TreeNode) -> bool {
+    let mut current = node.parent_idx;
+    for _ in 0..4 {
+        let Some(idx) = current else { return false };
+        let parent = &nodes[idx];
+        if is_sensitive_field(&parent.role, &parent.name) {
+            return true;
+        }
+        current = parent.parent_idx;
+    }
+    false
+}
+
+/// Replace one-time-code-looking digit runs (4-8 digits, optionally grouped
+/// with single spaces or hyphens) when a code keyword appears shortly before
+/// or after them. Plain numbers such as order ids or prices are left alone.
+fn redact_secret_text(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let starts_run = chars[i].is_ascii_digit() && (i == 0 || !is_word_char(chars[i - 1]));
+        if !starts_run {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        let mut digits = 0;
+        while j < chars.len() {
+            if chars[j].is_ascii_digit() {
+                digits += 1;
+                j += 1;
+            } else if (chars[j] == ' ' || chars[j] == '-')
+                && j + 1 < chars.len()
+                && chars[j + 1].is_ascii_digit()
+                && digits < 8
+            {
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        let ends_cleanly = j >= chars.len() || !is_word_char(chars[j]);
+        let before: String = chars[i.saturating_sub(40)..i].iter().collect();
+        let after: String = chars[j..(j + 30).min(chars.len())].iter().collect();
+        let near_keyword = CODE_CONTEXT_TERMS
+            .iter()
+            .any(|t| contains_term(&before, t) || contains_term(&after, t));
+        if (4..=8).contains(&digits) && ends_cleanly && near_keyword {
+            out.push_str(REDACTED);
+        } else {
+            out.extend(&chars[i..j]);
+        }
+        i = j;
+    }
+    out
 }
 
 fn compact_tree(tree: &str, interactive: bool) -> String {
@@ -1507,6 +1666,35 @@ fn collect_backend_node_ids(node: &Value, ids: &mut std::collections::HashSet<i6
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn redacts_one_time_codes_near_keywords_only() {
+        assert_eq!(
+            redact_secret_text("Your verification code is 482913"),
+            "Your verification code is [redacted]"
+        );
+        assert_eq!(redact_secret_text("482 913 is your OTP"), "[redacted] is your OTP");
+        assert_eq!(redact_secret_text("Order 482913 shipped"), "Order 482913 shipped");
+        assert_eq!(redact_secret_text("Total: 1299 items"), "Total: 1299 items");
+        assert_eq!(
+            redact_secret_text("Use code 12 to get 10% off"),
+            "Use code 12 to get 10% off"
+        );
+        assert_eq!(redact_secret_text("PIN: 1234"), "PIN: [redacted]");
+        assert_eq!(redact_secret_text("code A1B2C3D4"), "code A1B2C3D4");
+    }
+
+    #[test]
+    fn sensitive_fields_are_detected_by_role_and_name() {
+        assert!(is_sensitive_field("textbox", "Password"));
+        assert!(is_sensitive_field("textbox", "Enter one-time code"));
+        assert!(is_sensitive_field("textbox", "Card number"));
+        assert!(is_sensitive_field("textbox", "CVV"));
+        assert!(!is_sensitive_field("textbox", "Shipping address"));
+        assert!(!is_sensitive_field("textbox", "Phone"));
+        assert!(!is_sensitive_field("button", "Forgot password"));
+    }
+
     use super::*;
 
     #[test]

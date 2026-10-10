@@ -5738,6 +5738,10 @@ async fn handle_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
             .and_then(|v| v.as_u64())
             .map(|d| d as usize),
         urls: cmd.get("urls").and_then(|v| v.as_bool()).unwrap_or(false),
+        no_redact: cmd
+            .get("noRedact")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     };
 
     let previous_refs = state.ref_map.ref_ids();
@@ -7262,6 +7266,10 @@ async fn handle_diff_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Va
         compact,
         depth: max_depth,
         selector,
+        no_redact: cmd
+            .get("noRedact")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         ..SnapshotOptions::default()
     };
     // Reuse the current document identities without committing a failed capture.
