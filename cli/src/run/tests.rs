@@ -233,3 +233,73 @@ fn executor_thread_proxies_commands_to_caller() {
     assert_eq!(out.result, Some(json!(["Example", "Example"])));
     assert_eq!(seen, vec!["get title", "get title"]);
 }
+
+/// Resolve skills from the repository's real `skill-data/` directory.
+fn repo_skills(name: &str) -> Result<String, String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../skill-data")
+        .join(name)
+        .join("helpers.js");
+    std::fs::read_to_string(&path).map_err(|e| format!("{}: {}", path.display(), e))
+}
+
+#[test]
+fn shipped_site_skills_load_in_the_sandbox() {
+    let expected: &[(&str, &[&str])] = &[
+        ("github", &["listPullRequests", "listIssues", "readPullRequest", "readIssue", "commentOnIssue"]),
+        ("gmail", &["inbox", "search", "readThread", "draft", "send"]),
+        ("google-workspace", &["docs", "sheets", "drive", "calendar", "parseId"]),
+        ("linkedin", &["profile", "searchPeople", "feed", "messages", "sendMessage", "connect"]),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    for (name, functions) in expected {
+        let code = format!(
+            "const api = skills.load('{name}'); return Object.keys(api);"
+        );
+        let out = run_script(
+            &code,
+            Box::new(|argv: &[String]| json!({"success": true, "data": {"argv": argv}})),
+            RunOptions {
+                timeout: Duration::from_secs(5),
+                store: Store::at(dir.path().join("s.json")),
+                skills: repo_skills,
+            },
+        );
+        assert!(out.success, "{name}: {:?}", out.error);
+        let keys: Vec<String> = serde_json::from_value(out.result.unwrap()).unwrap();
+        for f in *functions {
+            assert!(keys.iter().any(|k| k == f), "{name} is missing {f}: {keys:?}");
+        }
+    }
+}
+
+#[test]
+fn shipped_mutating_helpers_do_not_submit_without_confirm() {
+    let dir = tempfile::tempdir().unwrap();
+    let calls: Rc<RefCell<Vec<Vec<String>>>> = Rc::new(RefCell::new(Vec::new()));
+    let seen = calls.clone();
+    let out = run_script(
+        r#"
+        const gw = skills.load('google-workspace');
+        const draft = gw.sheets.setCell('1abcDEFghijKLMNop_qrst', 'A1', 'x');
+        return draft;
+        "#,
+        Box::new(move |argv: &[String]| {
+            seen.borrow_mut().push(argv.to_vec());
+            json!({"success": true, "data": {"url": "https://docs.google.com/spreadsheets/d/1abcDEF/edit", "result": null}})
+        }),
+        RunOptions {
+            timeout: Duration::from_secs(5),
+            store: Store::at(dir.path().join("s.json")),
+            skills: repo_skills,
+        },
+    );
+    assert!(out.success, "{:?}", out.error);
+    assert_eq!(out.result.as_ref().and_then(|r| r.get("drafted")), Some(&json!(true)));
+    for argv in calls.borrow().iter() {
+        assert!(
+            !matches!(argv.first().map(String::as_str), Some("type" | "press" | "fill" | "keyboard")),
+            "unconfirmed setCell issued {argv:?}"
+        );
+    }
+}
