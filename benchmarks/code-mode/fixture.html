@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Code Mode Bench Fixture</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 24px; }
+  section { margin-bottom: 32px; }
+  table { border-collapse: collapse; }
+  td { border: 1px solid #ccc; padding: 2px 8px; }
+</style>
+</head>
+<body>
+<h1>Code Mode Bench Fixture</h1>
+
+<section id="form-section">
+  <h2>Signup form</h2>
+  <form id="signup" onsubmit="return false">
+    <label>Name <input id="name" name="name" type="text"></label>
+    <label>Email <input id="email" name="email" type="email"></label>
+    <button id="submit" type="submit">Submit</button>
+  </form>
+  <p id="status">Not submitted</p>
+</section>
+
+<section id="list-section">
+  <h2>Paginated list</h2>
+  <ul id="items"></ul>
+  <p id="page-label"></p>
+  <button id="next" type="button">Next</button>
+</section>
+
+<section id="table-section">
+  <h2>Records</h2>
+  <table id="rows"><tbody></tbody></table>
+  <p id="selected">Nothing selected</p>
+</section>
+
+<script>
+  (function () {
+    // (a) form
+    document.getElementById("signup").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var name = document.getElementById("name").value;
+      var email = document.getElementById("email").value;
+      document.getElementById("status").textContent = "Submitted: " + name + " <" + email + ">";
+    });
+
+    // (b) paginated list: 3 pages x 10 items, no network
+    var PAGES = 3, PER_PAGE = 10, page = 0;
+    var list = document.getElementById("items");
+    var next = document.getElementById("next");
+    var label = document.getElementById("page-label");
+    function render() {
+      list.innerHTML = "";
+      for (var i = 0; i < PER_PAGE; i++) {
+        var li = document.createElement("li");
+        li.textContent = "Item " + (page * PER_PAGE + i + 1);
+        list.appendChild(li);
+      }
+      label.textContent = "Page " + (page + 1) + " of " + PAGES;
+      next.disabled = page >= PAGES - 1;
+    }
+    next.addEventListener("click", function () {
+      if (page < PAGES - 1) { page++; render(); }
+    });
+    render();
+
+    // (c) table of 20 rows, each with a Select button
+    var tbody = document.querySelector("#rows tbody");
+    for (var r = 1; r <= 20; r++) {
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td>Row " + r + "</td><td>owner" + r + "@example.com</td><td></td>";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Select";
+      btn.setAttribute("aria-label", "Select Row " + r);
+      btn.dataset.row = String(r);
+      btn.addEventListener("click", function (e) {
+        document.getElementById("selected").textContent = "Selected: Row " + e.currentTarget.dataset.row;
+      });
+      tr.lastChild.appendChild(btn);
+      tbody.appendChild(tr);
+    }
+  })();
+</script>
+</body>
+</html>
