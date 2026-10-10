@@ -35,7 +35,8 @@ function makeEnv({ landingUrl } = {}) {
         case "eval": {
           const s = rec.script;
           let result = [];
-          if (s.includes("#new_comment_field")) result = "#new_comment_field";
+          if (s.startsWith("!!(document.querySelector('[role=main] tr.zA')")) result = true;
+          else if (s.includes("#new_comment_field")) result = "#new_comment_field";
           else if (s.includes("row.click()") || s.includes("b.click()")) result = true;
           else if (s.includes("fetch(u")) result = { ok: true, status: 200, text: 'a,b\n1,"x, y"\n2,"he said ""hi"""\n' };
           else if (s.includes("navigator.platform")) result = false;

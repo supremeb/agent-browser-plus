@@ -15,9 +15,19 @@ function parseId(urlOrId) {
   throw new AbError(`Could not find a Google file id in "${s}"`, "invalid_args", []);
 }
 
+// A signed-in profile can still pass through accounts.google.com on a silent
+// cookie-refresh redirect, so only treat sign-in as final if it persists.
 function checkLogin(target) {
-  const here = String(url() || "");
-  if (/accounts\.google\.com|\/ServiceLogin/.test(here)) {
+  const onSignIn = () => /accounts\.google\.com|\/ServiceLogin/.test(String(url() || ""));
+  if (!onSignIn()) return;
+  for (let i = 0; i < 16 && onSignIn(); i++) sleep(500);
+  // The first visit in a fresh or copied profile can stop on sign-in while
+  // Google refreshes its cookies; the retry then lands signed in.
+  if (onSignIn()) {
+    open(target);
+    for (let i = 0; i < 6 && onSignIn(); i++) sleep(500);
+  }
+  if (onSignIn()) {
     throw new AbError(`Google redirected to sign-in while opening ${target}. Log in once with --profile or --auto-connect.`, "not_logged_in", []);
   }
 }

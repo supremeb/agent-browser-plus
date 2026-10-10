@@ -12,9 +12,19 @@ function clampLimit(limit, def, max) {
   return Math.max(1, Math.min(Number(limit) || def, max));
 }
 
+// A signed-in profile can still pass through accounts.google.com on a silent
+// cookie-refresh redirect, so only treat sign-in as final if it persists.
 function checkLogin(target) {
-  const here = String(url() || "");
-  if (/accounts\.google\.com|workspace\.google\.com\/.*gmail|\/ServiceLogin/.test(here)) {
+  const onSignIn = () => /accounts\.google\.com|workspace\.google\.com\/.*gmail|\/ServiceLogin/.test(String(url() || ""));
+  if (!onSignIn()) return;
+  for (let i = 0; i < 16 && onSignIn(); i++) sleep(500);
+  // The first visit in a fresh or copied profile can stop on sign-in while
+  // Google refreshes its cookies; the retry then lands signed in.
+  if (onSignIn()) {
+    open(target);
+    for (let i = 0; i < 6 && onSignIn(); i++) sleep(500);
+  }
+  if (onSignIn()) {
     throw new AbError(`Gmail redirected to a Google sign-in page while opening ${target}. Log in once with --profile or --auto-connect.`, "not_logged_in", []);
   }
 }
@@ -24,11 +34,18 @@ function goList(hash) {
   const target = MAIL + hash;
   open(target);
   checkLogin(target);
-  try {
-    wait({ fn: "document.querySelector('[role=main] tr.zA') || document.querySelector('[role=main] td.TC') || document.querySelector('[role=main] .ae4')" });
-  } catch (e) {
+  // A cold Gmail load shows a "Loading Gmail" splash that can outlast a single
+  // wait, so poll for the list (rows, the empty-list cell, or the list body).
+  // Ready means real rows, or Gmail's "no conversations" cell; the empty list
+  // container alone appears before results arrive.
+  const ready = "!!(document.querySelector('[role=main] tr.zA') || document.querySelector('[role=main] td.TC'))";
+  const deadline = Date.now() + 45000;
+  while (evalPage(ready) !== true) {
     checkLogin(target);
-    throw new AbError(`Gmail list did not render for ${target}. Fall back to snapshot -i.`, "not_found", []);
+    if (Date.now() > deadline) {
+      throw new AbError(`Gmail list did not render for ${target}. Fall back to snapshot -i.`, "not_found", []);
+    }
+    sleep(500);
   }
   return target;
 }

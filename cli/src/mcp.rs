@@ -3457,19 +3457,37 @@ fn call_run(arguments: &Value) -> Result<Value, ProtocolError> {
 /// deadline filled in), and the script body for [`call_run`].
 fn run_tool_invocation(arguments: &Value) -> Result<(Vec<String>, Value, String), ProtocolError> {
     let code = required_string(arguments, "code")?;
-    let mut args = vec!["run".to_string()];
     let script_timeout = optional_u64(arguments, "scriptTimeoutMs")?;
-    if let Some(ms) = script_timeout {
-        if ms == 0 {
-            return Err(ProtocolError::invalid_params(
-                "scriptTimeoutMs must be a positive integer",
-            ));
+    if script_timeout == Some(0) {
+        return Err(ProtocolError::invalid_params(
+            "scriptTimeoutMs must be a positive integer",
+        ));
+    }
+    let process_timeout = optional_u64(arguments, "timeoutMs")?;
+
+    // The process deadline must stay above the script deadline, otherwise the
+    // run is killed before it can report its own timeout and partial output.
+    let script_timeout = match (script_timeout, process_timeout) {
+        (Some(script), Some(process)) if process <= script => {
+            return Err(ProtocolError::invalid_params(format!(
+                "timeoutMs ({}) must be greater than scriptTimeoutMs ({}); leave timeoutMs unset to derive it",
+                process, script
+            )))
         }
+        (Some(script), _) => Some(script),
+        // Only the process deadline given: derive a script budget that ends
+        // inside it, leaving a slice for start-up and reporting.
+        (None, Some(process)) => Some((process - process / 4).max(1)),
+        (None, None) => None,
+    };
+
+    let mut args = vec!["run".to_string()];
+    if let Some(ms) = script_timeout {
         args.push("--timeout".to_string());
         args.push(ms.to_string());
     }
     let mut arguments = arguments.clone();
-    if arguments.get("timeoutMs").is_none() {
+    if process_timeout.is_none() {
         let budget = script_timeout.unwrap_or(crate::run::DEFAULT_TIMEOUT_MS);
         arguments["timeoutMs"] = json!(budget.saturating_add(RUN_PROCESS_MARGIN_MS));
     }
@@ -4353,9 +4371,15 @@ mod tests {
             "5000".to_string()
         ]));
 
-        let (_, explicit, _) =
-            run_tool_invocation(&json!({ "code": "1", "timeoutMs": 999 })).unwrap();
-        assert_eq!(explicit["timeoutMs"], json!(999));
+        let (derived_args, explicit, _) =
+            run_tool_invocation(&json!({ "code": "1", "timeoutMs": 1000 })).unwrap();
+        assert_eq!(explicit["timeoutMs"], json!(1000));
+        assert_eq!(derived_args, vec!["run", "--timeout", "750"]);
+        assert!(run_tool_invocation(
+            &json!({ "code": "1", "timeoutMs": 5000, "scriptTimeoutMs": 5000 })
+        )
+        .is_err());
+
         assert!(run_tool_invocation(&json!({ "code": "1", "scriptTimeoutMs": 0 })).is_err());
     }
 

@@ -5801,6 +5801,7 @@ async fn handle_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
         "compact": options.compact,
         "depth": options.depth,
         "urls": options.urls,
+        "noRedact": options.no_redact,
     }))
     .unwrap_or_default();
     let previous = state.snapshot_revisions.get(&session_id).cloned();

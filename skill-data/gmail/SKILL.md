@@ -21,6 +21,8 @@ agent-browser --headed --profile google open https://mail.google.com
 
 Then pass `--profile google` on every call. Alternatively, attach to a Chrome where Gmail is already open with `agent-browser --auto-connect ...`. Google often blocks sign-in from freshly automated browsers, so logging in by hand in a headed profile, or attaching to your everyday Chrome, works far better than the `agent-browser auth` vault here. The helpers use account `/u/0/`; for another account, open `https://mail.google.com/mail/u/1/` yourself.
 
+To reuse the Google login already saved in your everyday Chrome, pass its profile name and run headed: `agent-browser --profile Default --headed ...` (list names with `agent-browser profiles`). This launches a temporary copy, so Chrome must be the real Google Chrome binary (`AGENT_BROWSER_EXECUTABLE_PATH` if it is not auto-detected). Google rejects the copied session in headless mode and redirects to sign-in. The first page load in a fresh copy can briefly stop on sign-in while Google refreshes cookies; the helpers wait and retry once before reporting `not_logged_in`.
+
 ## Quick start
 
 ```bash

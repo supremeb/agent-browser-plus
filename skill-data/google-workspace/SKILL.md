@@ -21,6 +21,8 @@ agent-browser --headed --profile google open https://drive.google.com
 
 Then pass `--profile google` on every call, or attach to an existing Chrome with `agent-browser --auto-connect ...`. Google often blocks sign-in from freshly automated browsers, so a hand login in a headed profile works far better than the `agent-browser auth` vault here. The same profile serves the `gmail` skill.
 
+To reuse the Google login already saved in your everyday Chrome, pass its profile name and run headed: `agent-browser --profile Default --headed ...` (list names with `agent-browser profiles`). This launches a temporary copy, so Chrome must be the real Google Chrome binary (`AGENT_BROWSER_EXECUTABLE_PATH` if it is not auto-detected). Google rejects the copied session in headless mode and redirects to sign-in. The first page load in a fresh copy can briefly stop on sign-in while Google refreshes cookies; the helpers wait and retry once before reporting `not_logged_in`.
+
 ## Quick start
 
 ```bash

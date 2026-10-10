@@ -219,7 +219,9 @@ fn parse_run(rest: &[&str], id: &str) -> Result<Value, ParseError> {
                 cmd["timeoutMs"] = json!(ms);
                 i += 1;
             }
-            "-" => {}
+            "-" if cmd.get("file").is_none() && cmd.get("code").is_none() => {
+                // Explicit stdin, same as passing no source.
+            }
             arg if !arg.starts_with('-')
                 && cmd.get("file").is_none()
                 && cmd.get("code").is_none() =>
@@ -3667,6 +3669,8 @@ mod tests {
         assert!(parse(&["run", "-e"]).is_err());
         assert!(parse(&["run", "a.js", "b.js"]).is_err());
         assert!(parse(&["run", "--bogus"]).is_err());
+        assert!(parse(&["run", "-"]).unwrap().get("file").is_none());
+        assert!(parse(&["run", "a.js", "-"]).is_err());
     }
 
     #[test]
