@@ -98,3 +98,16 @@ What this shows:
 - Through the CLI there is no meaningful difference. Agents already chain commands with `&&` in one Bash call, and Claude Code's Bash safety check rejects heredocs that contain braces and quotes, so `run <<'JS'` scripts are often blocked before they execute. Use the MCP tool for code mode in Claude Code.
 - A first round, before the Playwright-style `page` shim existed, showed the fork CLI taking 6 to 13 turns: models wrote `page.goto(...)` by reflex and failed. The shim fixed that.
 - These tasks are small. Savings grow with the number of data-dependent steps (loops over results, multi-page extraction), which is where per-call agents pay one turn per step.
+
+### Long multi-step task
+
+A longer task with steps that depend on page data: collect all 30 items across 3 pages, click Select on rows 5, 10, 15 and 20 and record the result after each click, then fill and submit the form using the email shown in row 20. Two runs per setup (8 runs); every run was correct.
+
+| Setup | Avg turns | Avg time (s) | Avg cost ($) |
+| --- | ---: | ---: | ---: |
+| Stock, CLI | 10.5 | 25.2 | 0.256 |
+| Fork, CLI | 6.5 | 18.2 | 0.199 |
+| Stock, MCP | 9.5 | 21.1 | 0.223 |
+| Fork, MCP (`agent_browser_run`) | 4.5 | 19.0 | 0.151 |
+
+On the longer task the fork wins through both surfaces: 53% fewer turns and 32% lower cost over MCP, and 38% fewer turns, 22% lower cost and 28% less time through the CLI. Savings grow with the number of steps that depend on page data.
