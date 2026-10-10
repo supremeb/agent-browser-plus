@@ -45,6 +45,16 @@ function ab(...args) {
   if (argv.length === 0) throw new AbError("ab() needs a command, e.g. ab('snapshot', '-i')", "invalid_args", argv);
   const resp = JSON.parse(__ab(JSON.stringify(argv)));
   if (!resp.success) throw new AbError(resp.error || `Command failed: ${argv.join(" ")}`, resp.code, argv);
+  // Under --confirm-actions the daemon parks gated commands and answers
+  // success with confirmation_required. A script must not treat that as done,
+  // and it cannot approve its own action (confirm/deny are blocked in run).
+  if (resp.data && resp.data.confirmation_required) {
+    throw new AbError(
+      `"${argv[0]}" needs user approval (${resp.data.action || "policy"}). Ask the user, then run \`agent-browser confirm ${resp.data.confirmation_id}\` outside the script.`,
+      "confirmation_required",
+      argv,
+    );
+  }
   if (resp.warning) __log("warn", `[${argv[0]}] ${resp.warning}`);
   return resp.data === undefined ? null : resp.data;
 }
@@ -77,6 +87,16 @@ function snapshot(opts = {}) {
   const data = ab(argv);
   if (data && typeof data.snapshot === "string") {
     return { tree: data.snapshot, refs: data.refs || {}, origin: data.origin, removedRefs: data.removedRefs || [] };
+  }
+  // --full / first --delta call: a full state wrapped in the delta envelope.
+  if (data && data.snapshot && data.snapshot.kind === "full") {
+    return {
+      tree: data.snapshot.tree,
+      refs: data.snapshot.refs || {},
+      origin: data.origin,
+      removedRefs: [],
+      revision: data.snapshot.revision,
+    };
   }
   return data;
 }
@@ -131,7 +151,9 @@ const sleep = (ms) => __sleep(Number(ms) || 0);
 const store = Object.freeze({
   get: (key) => JSON.parse(__store("get", String(key), "null")),
   set: (key, val) => {
-    __store("set", String(key), val === undefined ? "null" : JSON.stringify(val));
+    const json = val === undefined ? "null" : JSON.stringify(val);
+    if (json === undefined) throw new TypeError(`store.set("${key}"): value is not JSON-serializable`);
+    __store("set", String(key), json);
     return val;
   },
   delete: (key) => JSON.parse(__store("delete", String(key), "null")),

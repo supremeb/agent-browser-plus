@@ -216,8 +216,15 @@ function commentOnIssue(ownerRepo, number, body, opts = {}) {
   fill(box, String(body));
   if (opts.confirm !== true) return { ...preview, drafted: true, note: "Comment typed but not posted. Call again with { confirm: true } after the user approves." };
   find("role", "button", "click", { name: "Comment", exact: true });
-  wait({ load: "networkidle" });
-  return { ...preview, posted: true };
+  // The comment is posted once the button is clicked; a page that never goes
+  // network-idle must not turn that into an error (a retry would post twice).
+  let verified = true;
+  try {
+    wait({ load: "networkidle" });
+  } catch (_) {
+    verified = false;
+  }
+  return { ...preview, posted: true, verified };
 }
 
 module.exports = { repo, listPullRequests, listIssues, readPullRequest, readIssue, searchCode, notifications, commentOnIssue, splitRepo };

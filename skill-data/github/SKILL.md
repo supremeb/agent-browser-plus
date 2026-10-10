@@ -51,7 +51,7 @@ All helpers are synchronous under the hood; `await` is optional. `ownerRepo` is 
 | `readIssue(ownerRepo, number)` | `{ repo, number, url, title, state, author, body, labels[], commentCount }` |
 | `searchCode(query, { limit })` | `[{ repo, path, url, snippet }]`. Needs login |
 | `notifications({ limit })` | `[{ title, repo, url, unread, updated }]`. Needs login |
-| `commentOnIssue(ownerRepo, number, body, { confirm })` | Without `confirm: true`: types the comment and returns `{ drafted: true, posted: false, ... }`. With `confirm: true`: clicks Comment and returns `{ posted: true, ... }`. Works for PR numbers too |
+| `commentOnIssue(ownerRepo, number, body, { confirm })` | Without `confirm: true`: types the comment and returns `{ drafted: true, posted: false, ... }`. With `confirm: true`: clicks Comment and returns `{ posted: true, verified, ... }`; `verified: false` means the page did not settle afterwards, so reload the thread to check before retrying. Works for PR numbers too |
 | `splitRepo(input)` | Normalized `"owner/repo"` |
 
 Errors are thrown as `AbError` with `code` set to `not_logged_in` (redirected to login, or a page that needs a session) or `not_found` (404, or the expected element is missing).

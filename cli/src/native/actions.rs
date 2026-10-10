@@ -5758,6 +5758,8 @@ async fn handle_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
 
     let url = mgr.get_url().await.unwrap_or_default();
 
+    // Names in the refs map go through the same redaction as the rendered
+    // tree; the ref_map itself keeps raw names for element matching.
     let refs: serde_json::Map<String, Value> = state
         .ref_map
         .entries_sorted()
@@ -5765,7 +5767,12 @@ async fn handle_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
         .map(|(ref_id, entry)| {
             let mut obj = serde_json::Map::new();
             obj.insert("role".into(), Value::String(entry.role));
-            obj.insert("name".into(), Value::String(entry.name));
+            let name = if options.no_redact {
+                entry.name
+            } else {
+                snapshot::redact_secret_text(&entry.name)
+            };
+            obj.insert("name".into(), Value::String(name));
             (ref_id, Value::Object(obj))
         })
         .collect();

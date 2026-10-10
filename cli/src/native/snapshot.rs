@@ -1419,6 +1419,20 @@ const CODE_CONTEXT_TERMS: &[&str] = &[
     "authentication",
 ];
 
+/// "Code" contexts that name ordinary, non-secret numbers.
+const NON_SECRET_CODE_TERMS: &[&str] = &[
+    "zip",
+    "postal",
+    "postcode",
+    "area code",
+    "product code",
+    "promo",
+    "coupon",
+    "discount",
+    "error",
+    "status",
+];
+
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric()
 }
@@ -1471,7 +1485,7 @@ fn has_sensitive_field_ancestor(nodes: &[TreeNode], node: &TreeNode) -> bool {
 /// Replace one-time-code-looking digit runs (4-8 digits, optionally grouped
 /// with single spaces or hyphens) when a code keyword appears shortly before
 /// or after them. Plain numbers such as order ids or prices are left alone.
-fn redact_secret_text(text: &str) -> String {
+pub(crate) fn redact_secret_text(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
@@ -1482,29 +1496,54 @@ fn redact_secret_text(text: &str) -> String {
             i += 1;
             continue;
         }
-        let mut j = i;
-        let mut digits = 0;
-        while j < chars.len() {
-            if chars[j].is_ascii_digit() {
-                digits += 1;
-                j += 1;
-            } else if (chars[j] == ' ' || chars[j] == '-')
-                && j + 1 < chars.len()
-                && chars[j + 1].is_ascii_digit()
-                && digits < 8
-            {
-                j += 1;
+        // Take the leading digit group, then join further groups only in the
+        // common "482 913" / "482-913" one-time-code shape (3-digit groups),
+        // so dates like 2025-01-15 and phone-like runs stay intact.
+        let group_len = |from: usize| {
+            chars[from..]
+                .iter()
+                .take_while(|c| c.is_ascii_digit())
+                .count()
+        };
+        let mut j = i + group_len(i);
+        let mut digits = j - i;
+        let mut groups = vec![digits];
+        while j + 1 < chars.len()
+            && (chars[j] == ' ' || chars[j] == '-')
+            && chars[j + 1].is_ascii_digit()
+        {
+            let next = group_len(j + 1);
+            if groups.iter().chain([&next]).all(|g| *g == 3) && digits + next <= 8 {
+                groups.push(next);
+                digits += next;
+                j += 1 + next;
             } else {
                 break;
             }
         }
+        let run: String = chars[i..j].iter().filter(|c| c.is_ascii_digit()).collect();
+        let looks_like_year = groups.len() == 1
+            && digits == 4
+            && run.parse::<u32>().is_ok_and(|y| (1900..=2099).contains(&y));
         let ends_cleanly = j >= chars.len() || !is_word_char(chars[j]);
         let before: String = chars[i.saturating_sub(40)..i].iter().collect();
         let after: String = chars[j..(j + 30).min(chars.len())].iter().collect();
         let near_keyword = CODE_CONTEXT_TERMS
             .iter()
-            .any(|t| contains_term(&before, t) || contains_term(&after, t));
-        if (4..=8).contains(&digits) && ends_cleanly && near_keyword {
+            .any(|t| contains_term(&before, t) || contains_term(&after, t))
+            && !NON_SECRET_CODE_TERMS
+                .iter()
+                .any(|t| contains_term(&before, t) || contains_term(&after, t));
+        let date_like = j < chars.len()
+            && (chars[j] == '-' || chars[j] == '/' || chars[j] == '.')
+            && j + 1 < chars.len()
+            && chars[j + 1].is_ascii_digit();
+        if (4..=8).contains(&digits)
+            && ends_cleanly
+            && near_keyword
+            && !looks_like_year
+            && !date_like
+        {
             out.push_str(REDACTED);
         } else {
             out.extend(&chars[i..j]);
@@ -1691,6 +1730,80 @@ mod tests {
         );
         assert_eq!(redact_secret_text("PIN: 1234"), "PIN: [redacted]");
         assert_eq!(redact_secret_text("code A1B2C3D4"), "code A1B2C3D4");
+        assert_eq!(redact_secret_text("ZIP code 94107"), "ZIP code 94107");
+        assert_eq!(
+            redact_secret_text("Code freeze on 2025-01-15"),
+            "Code freeze on 2025-01-15"
+        );
+        assert_eq!(
+            redact_secret_text("Security update 2024"),
+            "Security update 2024"
+        );
+        assert_eq!(
+            redact_secret_text("Your code: 482-913"),
+            "Your code: [redacted]"
+        );
+        assert_eq!(redact_secret_text("Error code 5003"), "Error code 5003");
+        assert_eq!(
+            redact_secret_text("Postal code: 10115"),
+            "Postal code: 10115"
+        );
+    }
+
+    fn redaction_fixture() -> Vec<TreeNode> {
+        let mut root = TreeNode::empty();
+        root.role = "RootWebArea".to_string();
+        root.children = vec![1, 3, 5];
+        let mut field = TreeNode::empty();
+        field.role = "textbox".to_string();
+        field.name = "Password".to_string();
+        field.value_text = Some("hunter2".to_string());
+        field.parent_idx = Some(0);
+        field.children = vec![2];
+        let mut mirror = TreeNode::empty();
+        mirror.role = "StaticText".to_string();
+        mirror.name = "hunter2".to_string();
+        mirror.parent_idx = Some(1);
+        let mut para = TreeNode::empty();
+        para.role = "paragraph".to_string();
+        para.parent_idx = Some(0);
+        para.children = vec![4];
+        let mut code = TreeNode::empty();
+        code.role = "StaticText".to_string();
+        code.name = "Your verification code is 482913".to_string();
+        code.parent_idx = Some(3);
+        let mut order = TreeNode::empty();
+        order.role = "StaticText".to_string();
+        order.name = "Order 777123 shipped".to_string();
+        order.parent_idx = Some(0);
+        vec![root, field, mirror, para, code, order]
+    }
+
+    #[test]
+    fn render_tree_redacts_secrets_by_default_and_honors_no_redact() {
+        let nodes = redaction_fixture();
+        let mut redacted = String::new();
+        render_tree(&nodes, 0, 0, &mut redacted, &SnapshotOptions::default());
+        assert!(!redacted.contains("hunter2"), "{redacted}");
+        assert!(!redacted.contains("482913"), "{redacted}");
+        assert!(
+            redacted.contains("textbox \"Password\": [redacted]"),
+            "{redacted}"
+        );
+        assert!(
+            redacted.contains("Your verification code is [redacted]"),
+            "{redacted}"
+        );
+        assert!(redacted.contains("Order 777123 shipped"), "{redacted}");
+
+        let mut raw = String::new();
+        let options = SnapshotOptions {
+            no_redact: true,
+            ..SnapshotOptions::default()
+        };
+        render_tree(&nodes, 0, 0, &mut raw, &options);
+        assert!(raw.contains("hunter2"), "{raw}");
+        assert!(raw.contains("482913"), "{raw}");
     }
 
     #[test]

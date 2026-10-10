@@ -3534,7 +3534,9 @@ Globals:
 Sandbox:
   No filesystem, network, process, or module access. Each run gets a fresh
   scope (use store to carry data), a memory limit, and the --timeout deadline.
-  run, batch, chat, mcp, dashboard, install, and upgrade cannot be nested.
+  run, batch, chat, mcp, dashboard, install, upgrade, confirm, and deny cannot
+  be called from a script, nor can --stdin/--password-stdin. Commands parked by
+  --confirm-actions throw AbError code confirmation_required.
 
 Examples:
   agent-browser run -e 'await open("https://example.com"); return title()'

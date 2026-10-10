@@ -3643,6 +3643,42 @@ pub fn shell_words_split(s: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn parse_run_sources_and_timeout() {
+        let parse = |a: &[&str]| parse_command(&args(&a.join(" ")), &default_flags());
+        let inline = parse_command(
+            &["run".to_string(), "-e".to_string(), "return 1".to_string()],
+            &default_flags(),
+        )
+        .unwrap();
+        assert_eq!(inline["action"], "run");
+        assert_eq!(inline["code"], "return 1");
+
+        let file = parse(&["run", "script.js", "--timeout", "5000"]).unwrap();
+        assert_eq!(file["file"], "script.js");
+        assert_eq!(file["timeoutMs"], 5000);
+
+        let stdin = parse(&["run"]).unwrap();
+        assert!(stdin.get("file").is_none() && stdin.get("code").is_none());
+
+        assert!(parse(&["run", "--timeout", "0"]).is_err());
+        assert!(parse(&["run", "--timeout"]).is_err());
+        assert!(parse(&["run", "-e"]).is_err());
+        assert!(parse(&["run", "a.js", "b.js"]).is_err());
+        assert!(parse(&["run", "--bogus"]).is_err());
+    }
+
+    #[test]
+    fn no_redact_flag_parses_for_snapshot_and_diff() {
+        let snap = parse_command(&args("snapshot -i --no-redact"), &default_flags()).unwrap();
+        assert_eq!(snap["noRedact"], true);
+        let diff = parse_command(&args("diff snapshot --no-redact"), &default_flags()).unwrap();
+        assert_eq!(diff["noRedact"], true);
+        let plain = parse_command(&args("snapshot -i"), &default_flags()).unwrap();
+        assert!(plain.get("noRedact").is_none());
+    }
+
     use super::*;
 
     fn default_flags() -> Flags {

@@ -44,7 +44,7 @@ All helpers are synchronous under the hood; `await` is optional.
 | `search(query, { limit })` | Same row shape. `query` is any Gmail search syntax (`from:`, `to:`, `subject:`, `has:attachment`, `newer_than:7d`, `is:unread`, `label:`). Opens `#search/<query>` |
 | `readThread(indexOrSubject)` | `{ subject, url, messages: [{ from, email, to[], date, body }] }`. A number opens that row of the current list (from the last `inbox` or `search`); a string searches `subject:(...)` and opens the best match. Bodies are capped at 8000 chars |
 | `draft({ to, cc, bcc, subject, body })` | Opens a prefilled compose window and lets Gmail autosave it. Returns `{ drafted: true, sent: false, ... }`. Never sends |
-| `send({ to, cc, bcc, subject, body, confirm })` | Without `confirm: true` behaves like `draft` and returns `{ drafted: true, sent: false }`. With `confirm: true` clicks Send and waits for "Message sent", returning `{ sent: true }` |
+| `send({ to, cc, bcc, subject, body, confirm })` | Without `confirm: true` behaves like `draft` and returns `{ drafted: true, sent: false }`. With `confirm: true` clicks Send and returns `{ sent: true, verified }`, where `verified` is false when the "Message sent" toast was not seen. Never retry a send with `verified: false`: the message was most likely sent; check the Sent folder instead |
 
 `to`, `cc` and `bcc` accept a string or an array of addresses. Errors are thrown as `AbError` with `code` `not_logged_in` (redirected to accounts.google.com) or `not_found` (list or thread did not render, or nothing matched).
 

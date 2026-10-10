@@ -162,7 +162,8 @@ function draftMessage(profileUrlOrSlug, textToSend) {
     throw new AbError("LinkedIn message box did not open. Fall back to snapshot -i.", "not_found", []);
   }
   click(box);
-  ab("keyboard", "type", String(textToSend));
+  // insertText dispatches no key events, so newlines can never press Enter (which sends).
+  ab("keyboard", "inserttext", String(textToSend));
   return { profileUrl: target, text: String(textToSend), drafted: true, sent: false };
 }
 

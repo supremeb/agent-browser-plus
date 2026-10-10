@@ -349,3 +349,78 @@ fn shipped_mutating_helpers_do_not_submit_without_confirm() {
         );
     }
 }
+
+#[test]
+fn stdin_reading_and_approval_commands_are_blocked() {
+    let h = Harness::new();
+    let out = h.run(
+        "const codes = []; for (const argv of [['eval', '--stdin'], ['auth', 'save', 'x', '--password-stdin'], ['confirm', 'c1'], ['deny', 'c1']]) { try { ab(argv); } catch (e) { codes.push(e.code); } } return codes;",
+    );
+    assert_eq!(
+        out.result,
+        Some(json!([
+            "blocked_command",
+            "blocked_command",
+            "blocked_command",
+            "blocked_command"
+        ]))
+    );
+    assert!(h.calls.borrow().is_empty());
+}
+
+fn parked_for_approval(_argv: &[String]) -> Value {
+    json!({"success": true, "data": {"confirmation_required": true, "confirmation_id": "c9", "action": "navigate"}})
+}
+
+#[test]
+fn confirmation_required_is_an_error_not_success() {
+    let h = Harness::new();
+    let out = h.run_with(
+        "try { open('https://x'); return 'done'; } catch (e) { return [e.code, e.message]; }",
+        5_000,
+        parked_for_approval,
+    );
+    let result = out.result.unwrap();
+    assert_eq!(result[0], "confirmation_required");
+    assert!(result[1]
+        .as_str()
+        .unwrap()
+        .contains("agent-browser confirm c9"));
+}
+
+fn delta_full(_argv: &[String]) -> Value {
+    json!({"success": true, "data": {"snapshot": {"kind": "full", "revision": 3, "tree": "- button [ref=e1]", "refs": {"e1": {"role": "button", "name": "Go"}}}, "origin": "https://x"}})
+}
+
+#[test]
+fn snapshot_full_unwraps_to_tree_and_refs() {
+    let h = Harness::new();
+    let out = h.run_with(
+        "const s = snapshot({ full: true }); return [s.tree, Object.keys(s.refs), s.revision];",
+        5_000,
+        delta_full,
+    );
+    assert_eq!(out.result, Some(json!(["- button [ref=e1]", ["e1"], 3])));
+}
+
+#[test]
+fn store_set_rejects_non_serializable_values() {
+    let h = Harness::new();
+    let out = h.run("try { store.set('f', () => 1); } catch (e) { return e.name; }");
+    assert_eq!(out.result, Some(json!("TypeError")));
+}
+
+#[test]
+fn huge_timeout_does_not_overflow() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = run_script(
+        "return 1",
+        Box::new(ok_echo),
+        RunOptions {
+            timeout: Duration::from_millis(u64::MAX),
+            store: Store::at(dir.path().join("s.json")),
+            skills: test_skills,
+        },
+    );
+    assert_eq!(out.result, Some(json!(1)));
+}

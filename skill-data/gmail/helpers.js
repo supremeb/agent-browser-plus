@@ -81,7 +81,7 @@ function readThread(indexOrSubject) {
     const rows = Array.from(document.querySelectorAll("[role=main] tr.zA")).filter((tr) => tr.offsetParent !== null);
     const row = typeof key === "number"
       ? rows[key]
-      : rows.find((tr) => (tr.querySelector(".bog") || {}).textContent && tr.querySelector(".bog").textContent.toLowerCase().includes(key.toLowerCase())) || rows[0];
+      : rows.find((tr) => (tr.querySelector(".bog") || {}).textContent && tr.querySelector(".bog").textContent.toLowerCase().includes(key.toLowerCase())) || null;
     if (!row) return false;
     row.click();
     return true;
@@ -141,8 +141,16 @@ function send(msg = {}) {
   }
   // The Send button tooltip is "Send (Ctrl-Enter)"; "More send options" does not match.
   click('div[role="button"][data-tooltip^="Send"]');
-  wait({ text: "Message sent" });
-  return { drafted: false, sent: true, ...fields };
+  // The send has already happened once Send is clicked. The confirmation toast
+  // is English-only and short-lived, so a missed toast must not report failure
+  // (a retry would send the message twice).
+  let verified = true;
+  try {
+    wait({ text: "Message sent" });
+  } catch (_) {
+    verified = false;
+  }
+  return { drafted: false, sent: true, verified, ...fields };
 }
 
 module.exports = { inbox, search, readThread, draft, send };

@@ -27,6 +27,8 @@ const MAX_STACK_BYTES: usize = 1024 * 1024;
 const MAX_LOG_BYTES: usize = 1024 * 1024;
 
 /// Commands that cannot be nested inside a script.
+/// `confirm`/`deny` are blocked so a script can never approve an action that
+/// `--confirm-actions` parked for the user.
 const BLOCKED_COMMANDS: &[&str] = &[
     "run",
     "batch",
@@ -35,7 +37,11 @@ const BLOCKED_COMMANDS: &[&str] = &[
     "dashboard",
     "install",
     "upgrade",
+    "confirm",
+    "deny",
 ];
+/// Upper bound on a script budget; also keeps `Instant + timeout` from overflowing.
+pub const MAX_TIMEOUT_MS: u64 = 24 * 60 * 60 * 1000;
 
 /// Executes one CLI argv and returns `{success, data, error, code, warning}`.
 pub type Bridge = Box<dyn FnMut(&[String]) -> Value + 'static>;
@@ -129,7 +135,7 @@ fn timeout_message(timeout: Duration) -> String {
 /// Run `code` to completion. Never panics on script errors; every failure is
 /// reported through [`RunOutcome`].
 pub fn run_script(code: &str, bridge: Bridge, options: RunOptions) -> RunOutcome {
-    let timeout = options.timeout;
+    let timeout = options.timeout.min(Duration::from_millis(MAX_TIMEOUT_MS));
     let deadline = Instant::now() + timeout;
     let shared = Rc::new(RefCell::new(Shared {
         bridge,
@@ -301,6 +307,17 @@ fn install_host_functions<'js>(
                 if Instant::now() >= state.deadline {
                     return Err(throw(&ctx, "Script deadline reached"));
                 }
+                if let Some(flag) = argv
+                    .iter()
+                    .find(|a| matches!(a.as_str(), "--stdin" | "--password-stdin"))
+                {
+                    return Ok(json!({
+                        "success": false,
+                        "error": format!("`{}` reads stdin, which is not available inside a run script; pass the value as an argument (e.g. evalPage(js) or eval -b)", flag),
+                        "code": "blocked_command",
+                    })
+                    .to_string());
+                }
                 if let Some(first) = argv.first() {
                     if BLOCKED_COMMANDS.contains(&first.as_str()) {
                         return Ok(json!({
@@ -359,7 +376,7 @@ fn install_host_functions<'js>(
                   -> rquickjs::Result<String> {
                 let mut state = s.borrow_mut();
                 let result = match op.as_str() {
-                    "get" => Ok(state.store.get(&key).unwrap_or(Value::Null)),
+                    "get" => state.store.get(&key).map(|v| v.unwrap_or(Value::Null)),
                     "set" => {
                         let value: Value = serde_json::from_str(&value_json).unwrap_or(Value::Null);
                         state.store.set(&key, value).map(|_| Value::Null)
@@ -368,7 +385,7 @@ fn install_host_functions<'js>(
                         .store
                         .delete(&key)
                         .map(|old| old.unwrap_or(Value::Null)),
-                    "keys" => Ok(json!(state.store.keys())),
+                    "keys" => state.store.keys().map(|k| json!(k)),
                     other => Err(format!("unknown store op {}", other)),
                 };
                 match result {

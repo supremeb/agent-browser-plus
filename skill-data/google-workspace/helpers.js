@@ -83,7 +83,7 @@ const docs = {
     click(".kix-appview-editor");
     const mac = pageCall(() => /Mac/.test(navigator.platform)) === true;
     press(mac ? "Meta+ArrowDown" : "Control+End");
-    ab("keyboard", "type", String(textToAdd));
+    ab("keyboard", "inserttext", String(textToAdd));
     sleep(1500);
     return { ...preview, appended: true };
   },
@@ -111,7 +111,7 @@ const sheets = {
     click("#t-name-box");
     fill("#t-name-box", String(cell));
     press("Enter");
-    ab("keyboard", "type", String(val));
+    ab("keyboard", "inserttext", String(val));
     press("Enter");
     sleep(1000);
     return { ...preview, written: true };
