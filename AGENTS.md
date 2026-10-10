@@ -17,6 +17,8 @@ This project uses **pnpm**. Always use `pnpm` instead of `npm` or `yarn` for ins
 
 Do not hard-wrap prose in documentation files such as Markdown, MDX, and READMEs; let the editor or renderer wrap text naturally.
 
+`docs/solutions/` holds documented solutions to past problems (bugs, best practices, architecture and workflow patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas. `CONCEPTS.md` holds shared domain vocabulary.
+
 When adding or changing user-facing features (new flags, commands, behaviors, environment variables, etc.), update **all** of the following:
 
 1. `cli/src/output.rs` — `--help` output (flags list, examples, environment variables)
