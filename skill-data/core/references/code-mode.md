@@ -161,3 +161,18 @@ Available helpers: `github`, `gmail`, `google-workspace` (docs, sheets, drive, c
 - A single quick command, such as one `open` or one `get text`. Plain CLI is simpler.
 - Interactive exploration where you need to see the page before deciding what to do. Take a `snapshot -i` first, then write a script once you know the structure.
 - Steps that need a human in the middle (2FA, CAPTCHA, approving a send). Stop the script, ask, then continue in a new run.
+
+## Playwright-style `page`
+
+Scripts can use the familiar Playwright subset instead of the helpers. Locators resolve to one element in the page and are then driven by the normal CLI commands, so clicks are real input events.
+
+```js
+await page.goto("https://example.com/orders");
+await page.locator("tr", { hasText: "Order 17" }).getByRole("button", { name: /details/i }).click();
+await page.getByLabel("Email").fill("ada@example.com");
+const rows = await page.locator("tbody tr").allInnerTexts();
+const title = await page.evaluate(() => document.title);
+return { rows, title };
+```
+
+Supported: `page.goto`, `url`, `title`, `content`, `reload`, `goBack`, `goForward`, `evaluate(fn, arg)`, `locator(css, { hasText })`, `getByRole(role, { name, exact })`, `getByText`, `getByLabel`, `getByPlaceholder`, `click`, `fill`, `type`, `press`, `textContent`, `innerText`, `inputValue`, `waitForSelector`, `waitForTimeout`, `waitForLoadState`, `waitForURL`, `screenshot`, `keyboard.press/type/insertText`. Locators support `click`, `dblclick`, `fill`, `type`, `press`, `check`, `uncheck`, `hover`, `focus`, `selectOption`, `innerText`, `textContent`, `inputValue`, `getAttribute`, `isVisible`, `count`, `all`, `allInnerTexts`, `first`, `last`, `nth`, `filter({ hasText })`, `locator`, `getByRole`, `getByText`, `waitFor`, `scrollIntoViewIfNeeded`, `screenshot`. Anything else: use `ab(...)` or `evalPage`.

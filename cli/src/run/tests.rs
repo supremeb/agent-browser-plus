@@ -424,3 +424,28 @@ fn huge_timeout_does_not_overflow() {
     );
     assert_eq!(out.result, Some(json!(1)));
 }
+
+fn locator_page(argv: &[String]) -> Value {
+    match argv.first().map(String::as_str) {
+        Some("eval") => json!({"success": true, "data": {"result": "l1"}}),
+        Some("get") => json!({"success": true, "data": {"text": "Selected: Row 17"}}),
+        _ => json!({"success": true, "data": {}}),
+    }
+}
+
+#[test]
+fn playwright_style_page_shim_maps_to_cli_commands() {
+    let h = Harness::new();
+    let out = h.run_with(
+        "await page.goto('https://x'); await page.locator('tr', { hasText: 'Row 17' }).getByRole('button', { name: /select/i }).click(); return await page.locator('#selected').innerText();",
+        5_000,
+        locator_page,
+    );
+    assert!(out.success, "{:?}", out.error);
+    assert_eq!(out.result, Some(json!("Selected: Row 17")));
+    let calls = h.calls.borrow();
+    assert_eq!(calls[0], vec!["open", "https://x"]);
+    assert!(calls
+        .iter()
+        .any(|c| c == &vec!["click".to_string(), "[data-ab-loc=\"l1\"]".to_string()]));
+}

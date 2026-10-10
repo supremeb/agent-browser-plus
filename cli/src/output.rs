@@ -3528,6 +3528,9 @@ Globals:
   store.get/set/delete/keys   JSON values kept per --session across runs
   skills.load(name)    Site helpers from skill-data/<name>/helpers.js
                        (github, gmail, google-workspace, linkedin)
+  page                 Playwright-style subset: page.goto, page.locator(css, {hasText}),
+                       getByRole(role, {name}), getByText, getByLabel, .click/.fill/
+                       .innerText/.inputValue/.count/.all/.nth/.first, page.evaluate(fn, arg)
   result(value)        Set the result without returning
   console.log/info/warn/error
 

@@ -134,6 +134,115 @@ function find(...args) {
   return ab(argv);
 }
 
+// ---- Playwright-style page shim ----------------------------------------------
+// Models reach for Playwright by reflex (page.goto, page.locator(...).click()).
+// This maps the common subset onto the same CLI commands. A locator is
+// resolved in the page to one element, tagged with a temporary attribute, and
+// then driven by the real CLI command (so clicks stay real input events).
+let __locSeq = 0;
+function __resolve(spec) {
+  if (typeof spec.css === "string" && spec.css.startsWith("@") && !spec.hasText && !spec.role && !spec.text) {
+    return spec.css;
+  }
+  const id = `l${++__locSeq}`;
+  const found = evalPage(`((spec, id) => {
+    const norm = (s) => (s || "").replace(/\\s+/g, " ").trim();
+    const nameOf = (el) => {
+      const by = el.getAttribute("aria-labelledby");
+      const labelled = by ? by.split(/\\s+/).map((i) => (document.getElementById(i) || {}).innerText || "").join(" ") : "";
+      const label = el.labels && el.labels.length ? [...el.labels].map((l) => l.innerText).join(" ") : "";
+      return norm(el.getAttribute("aria-label") || labelled || label || el.getAttribute("title") || el.getAttribute("placeholder") || el.innerText || el.value || el.getAttribute("alt") || "");
+    };
+    const matches = (val, want, exact) => want == null || (want.re ? new RegExp(want.re, want.flags).test(val) : exact ? val === want.s : val.toLowerCase().includes(want.s.toLowerCase()));
+    const roleSel = { button: "button,[role=button],input[type=button],input[type=submit]", link: "a[href],[role=link]", textbox: "input:not([type]),input[type=text],input[type=email],input[type=search],input[type=password],input[type=tel],input[type=url],textarea,[role=textbox],[contenteditable=true]", checkbox: "input[type=checkbox],[role=checkbox]", radio: "input[type=radio],[role=radio]", heading: "h1,h2,h3,h4,h5,h6,[role=heading]", listitem: "li,[role=listitem]", row: "tr,[role=row]", cell: "td,th,[role=cell]", combobox: "select,[role=combobox]", option: "option,[role=option]", img: "img,[role=img]", tab: "[role=tab]", menuitem: "[role=menuitem]", dialog: "dialog,[role=dialog]" };
+    let root = document;
+    let els = [];
+    if (spec.within) { root = document.querySelector('[data-ab-loc="' + spec.within + '"]') || document; }
+    if (spec.role) els = [...root.querySelectorAll(roleSel[spec.role] || "[role=" + spec.role + "]")].filter((e) => matches(nameOf(e), spec.name, spec.exact));
+    else if (spec.text) els = [...root.querySelectorAll("body *")].filter((e) => matches(norm(e.innerText || e.textContent), spec.text, spec.exact) && ![...e.children].some((c) => matches(norm(c.innerText || c.textContent), spec.text, spec.exact)));
+    else els = [...root.querySelectorAll(spec.css)];
+    if (spec.hasText) els = els.filter((e) => matches(norm(e.innerText || e.textContent), spec.hasText, false));
+    if (spec.all) return els.map((e, i) => { e.setAttribute("data-ab-loc", id + "-" + i); return id + "-" + i; });
+    const idx = spec.nth == null ? 0 : spec.nth < 0 ? els.length + spec.nth : spec.nth;
+    const el = els[idx];
+    if (!el) return null;
+    el.setAttribute("data-ab-loc", id);
+    return id;
+  })(${JSON.stringify(spec)}, ${JSON.stringify(id)})`);
+  if (spec.all) return found || [];
+  if (!found) throw new AbError(`No element matches ${__describe(spec)}. Take a snapshot to see what is on the page.`, "not_found", []);
+  return `[data-ab-loc="${found}"]`;
+}
+function __describe(spec) {
+  return spec.role ? `role=${spec.role}${spec.name ? ` name=${JSON.stringify(spec.name.s || spec.name.re)}` : ""}` : spec.text ? `text=${JSON.stringify(spec.text.s || spec.text.re)}` : JSON.stringify(spec.css) + (spec.hasText ? ` hasText=${JSON.stringify(spec.hasText.s || spec.hasText.re)}` : "");
+}
+const __matcher = (v) => (v == null ? undefined : v instanceof RegExp ? { re: v.source, flags: v.flags } : { s: String(v) });
+function __locator(spec) {
+  const sel = () => __resolve(spec);
+  const sub = (extra) => __locator({ ...extra, within: __resolve(spec).slice(14, -2) });
+  return {
+    click: (o = {}) => (o.clickCount === 2 ? dblclick(sel()) : click(sel())),
+    dblclick: () => dblclick(sel()),
+    fill: (v) => fill(sel(), v),
+    type: (v) => type(sel(), v),
+    pressSequentially: (v) => type(sel(), v),
+    press: (k) => { focus(sel()); return press(k); },
+    check: () => check(sel()),
+    uncheck: () => uncheck(sel()),
+    hover: () => hover(sel()),
+    focus: () => focus(sel()),
+    selectOption: (v) => select(sel(), ...[].concat(v)),
+    innerText: () => text(sel()),
+    textContent: () => text(sel()),
+    inputValue: () => value(sel()),
+    getAttribute: (n) => attr(sel(), n),
+    isVisible: () => { try { return isVisible(sel()); } catch (_) { return false; } },
+    count: () => __resolve({ ...spec, all: true }).length,
+    all: () => __resolve({ ...spec, all: true }).map((id) => __locator({ css: `[data-ab-loc="${id}"]` })),
+    allInnerTexts: () => __resolve({ ...spec, all: true }).map((id) => text(`[data-ab-loc="${id}"]`)),
+    allTextContents: () => __resolve({ ...spec, all: true }).map((id) => text(`[data-ab-loc="${id}"]`)),
+    first: () => __locator({ ...spec, nth: 0 }),
+    last: () => __locator({ ...spec, nth: -1 }),
+    nth: (i) => __locator({ ...spec, nth: i }),
+    filter: (o = {}) => __locator({ ...spec, hasText: __matcher(o.hasText) || spec.hasText }),
+    locator: (css) => sub({ css }),
+    getByRole: (role, o = {}) => sub({ role, name: __matcher(o.name), exact: !!o.exact }),
+    getByText: (t, o = {}) => sub({ text: __matcher(t), exact: !!o.exact }),
+    waitFor: () => wait(sel()),
+    scrollIntoViewIfNeeded: () => ab("scrollintoview", sel()),
+    screenshot: (o = {}) => screenshot(o.path),
+  };
+}
+const page = Object.freeze({
+  goto: (u) => open(u),
+  url: () => url(),
+  title: () => title(),
+  content: () => evalPage("document.documentElement.outerHTML"),
+  reload: () => reload(),
+  goBack: () => back(),
+  goForward: () => forward(),
+  evaluate: (fn, arg) => evalPage(typeof fn === "function" ? `(${fn.toString()})(${JSON.stringify(arg)})` : String(fn)),
+  locator: (css, o = {}) => __locator({ css, hasText: __matcher(o.hasText) }),
+  getByRole: (role, o = {}) => __locator({ role, name: __matcher(o.name), exact: !!o.exact }),
+  getByText: (t, o = {}) => __locator({ text: __matcher(t), exact: !!o.exact }),
+  getByLabel: (t) => __locator({ role: "textbox", name: __matcher(t) }),
+  getByPlaceholder: (t) => __locator({ css: `[placeholder*=${JSON.stringify(String(t))}]` }),
+  click: (s) => click(s),
+  fill: (s, v) => fill(s, v),
+  type: (s, v) => type(s, v),
+  press: (s, k) => { focus(s); return press(k); },
+  textContent: (s) => text(s),
+  innerText: (s) => text(s),
+  inputValue: (s) => value(s),
+  isVisible: (s) => isVisible(s),
+  waitForSelector: (s) => wait(s),
+  waitForTimeout: (ms) => sleep(ms),
+  waitForLoadState: (st = "load") => wait({ load: st }),
+  waitForURL: (u) => wait({ url: String(u) }),
+  screenshot: (o = {}) => screenshot(o.path, { full: o.fullPage }),
+  keyboard: Object.freeze({ press: (k) => press(k), type: (t) => ab("keyboard", "type", t), insertText: (t) => ab("keyboard", "inserttext", t) }),
+});
+
 // ---- Waiting ----------------------------------------------------------------
 // wait(ms) | wait("#selector") | wait({ text }) | wait({ url }) | wait({ load: "networkidle" }) | wait({ fn })
 function wait(arg) {
