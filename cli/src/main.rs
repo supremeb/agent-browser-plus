@@ -11,6 +11,7 @@ mod native;
 mod output;
 mod plugins;
 mod read;
+mod run;
 mod skills;
 #[cfg(test)]
 mod test_utils;
@@ -2141,6 +2142,12 @@ fn main() {
         return;
     }
 
+    // Handle code mode: one JavaScript program, many commands
+    if cmd.get("action").and_then(|v| v.as_str()) == Some("run") {
+        run_code(&cmd, &flags, &daemon_opts);
+        return;
+    }
+
     let output_opts = OutputOptions::from_flags(&flags);
 
     match send_command_with_respawn(cmd.clone(), &flags.session, &daemon_opts) {
@@ -2230,6 +2237,102 @@ fn read_batch_stdin(flags: &Flags) -> Vec<Vec<String>> {
     }
 }
 
+/// Parse one CLI argv (without the binary name), apply the same per-command
+/// decoration as a top-level invocation, and send it to the session daemon.
+/// Shared by `batch` and `run` so both keep identical command semantics.
+/// Returns the parsed action name alongside the daemon response; parse and
+/// transport failures are returned as a formatted error string.
+pub(crate) fn execute_cli_argv(
+    cmd_args: &[String],
+    flags: &Flags,
+    daemon_opts: &DaemonOptions,
+) -> Result<(Option<String>, connection::Response), String> {
+    let mut parsed = parse_command(cmd_args, flags).map_err(|e| e.format())?;
+    attach_input_mode(&mut parsed, flags);
+    match parsed.get("action").and_then(|v| v.as_str()) {
+        Some("read") => parsed["tls"] = json!(tls::session_options(flags, &flags.session)),
+        Some("close") => tls::clear_session(&flags.session),
+        _ => {}
+    }
+
+    let action = parsed
+        .get("action")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    attach_plugins_to_command(&mut parsed, &flags.plugins);
+    attach_restore_config_to_command(&mut parsed, flags);
+    attach_pin_tab_to_command(&mut parsed, flags);
+
+    send_command_with_respawn(parsed, &flags.session, daemon_opts).map(|resp| (action, resp))
+}
+
+/// `agent-browser run`: execute a script in the code-mode sandbox, routing
+/// every `ab()` call through [`execute_cli_argv`].
+fn run_code(cmd: &serde_json::Value, flags: &Flags, daemon_opts: &DaemonOptions) {
+    let code = match run::read_script(cmd) {
+        Ok(code) => code,
+        Err(e) => {
+            if flags.json {
+                print_json_error(e);
+            } else {
+                eprintln!("{} {}", color::error_indicator(), e);
+            }
+            exit(1);
+        }
+    };
+    let timeout = std::time::Duration::from_millis(
+        cmd.get("timeoutMs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(run::DEFAULT_TIMEOUT_MS),
+    );
+
+    let outcome = run::run_script_with_executor(
+        code,
+        timeout,
+        run::store::Store::for_session(&flags.session),
+        skills::helpers_source,
+        |argv| match execute_cli_argv(argv, flags, daemon_opts) {
+            Ok((_, resp)) => serde_json::to_value(&resp)
+                .unwrap_or_else(|e| json!({ "success": false, "error": e.to_string() })),
+            Err(e) => json!({ "success": false, "error": e }),
+        },
+    );
+
+    if flags.json {
+        println!("{}", outcome.to_json());
+    } else {
+        for log in &outcome.logs {
+            match log.level.as_str() {
+                "warn" | "error" => eprintln!("{}", log.text),
+                _ => println!("{}", log.text),
+            }
+        }
+        if let Some(result) = &outcome.result {
+            match result {
+                serde_json::Value::String(text) => println!("{}", text),
+                other => println!(
+                    "{}",
+                    serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string())
+                ),
+            }
+        }
+        if let Some(error) = &outcome.error {
+            match &outcome.error_command {
+                Some(argv) if !argv.is_empty() => eprintln!(
+                    "{} {} (while running: {})",
+                    color::error_indicator(),
+                    error,
+                    argv.join(" ")
+                ),
+                _ => eprintln!("{} {}", color::error_indicator(), error),
+            }
+        }
+    }
+    if !outcome.success {
+        exit(1);
+    }
+}
+
 fn run_batch(
     flags: &Flags,
     daemon_opts: &DaemonOptions,
@@ -2255,51 +2358,8 @@ fn run_batch(
             continue;
         }
 
-        let mut parsed = match parse_command(cmd_args, flags) {
-            Ok(c) => c,
-            Err(e) => {
-                had_error = true;
-                if flags.json {
-                    results.push(json!({
-                        "command": cmd_args,
-                        "success": false,
-                        "error": e.format(),
-                    }));
-                    if bail {
-                        break;
-                    }
-                } else {
-                    eprintln!(
-                        "{} Command {}: {}",
-                        color::error_indicator(),
-                        i + 1,
-                        e.format()
-                    );
-                    if bail {
-                        exit(1);
-                    }
-                }
-                continue;
-            }
-        };
-        attach_input_mode(&mut parsed, flags);
-        match parsed.get("action").and_then(|v| v.as_str()) {
-            Some("read") => parsed["tls"] = json!(tls::session_options(flags, &flags.session)),
-            Some("close") => tls::clear_session(&flags.session),
-            _ => {}
-        }
-
-        let action = parsed
-            .get("action")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        attach_plugins_to_command(&mut parsed, &flags.plugins);
-        attach_restore_config_to_command(&mut parsed, flags);
-
-        attach_pin_tab_to_command(&mut parsed, flags);
-
-        match send_command_with_respawn(parsed, &flags.session, daemon_opts) {
-            Ok(resp) => {
+        match execute_cli_argv(cmd_args, flags, daemon_opts) {
+            Ok((action, resp)) => {
                 if flags.json {
                     let mut result = json!({
                         "command": cmd_args,
