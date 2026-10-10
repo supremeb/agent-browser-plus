@@ -158,6 +158,7 @@ pub fn is_top_level_command(value: &str) -> bool {
             | "device"
             | "diff"
             | "batch"
+            | "run"
             | "react"
             | "vitals"
             | "web-vitals"
@@ -177,6 +178,54 @@ pub fn is_top_level_command(value: &str) -> bool {
             | "chat"
             | "webmcp"
     )
+}
+
+/// Parse `run [file] [-e <code>] [--timeout <ms>]`. With neither a file nor
+/// `-e`, the script is read from stdin.
+fn parse_run(rest: &[&str], id: &str) -> Result<Value, ParseError> {
+    const RUN_USAGE: &str = "run [file] [-e <code>] [--timeout <ms>]";
+    let mut cmd = json!({ "id": id, "action": "run" });
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "-e" | "--eval" => {
+                let code = rest.get(i + 1).ok_or_else(|| ParseError::MissingArguments {
+                    context: "run -e".to_string(),
+                    usage: RUN_USAGE,
+                })?;
+                cmd["code"] = json!(code);
+                i += 1;
+            }
+            "--timeout" => {
+                let raw = rest.get(i + 1).ok_or_else(|| ParseError::MissingArguments {
+                    context: "run --timeout".to_string(),
+                    usage: RUN_USAGE,
+                })?;
+                let ms = raw
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|ms| *ms > 0)
+                    .ok_or_else(|| ParseError::InvalidValue {
+                        message: format!("Invalid --timeout value: {} (expected milliseconds > 0)", raw),
+                        usage: RUN_USAGE,
+                    })?;
+                cmd["timeoutMs"] = json!(ms);
+                i += 1;
+            }
+            "-" => {}
+            arg if !arg.starts_with('-') && cmd.get("file").is_none() && cmd.get("code").is_none() => {
+                cmd["file"] = json!(arg);
+            }
+            other => {
+                return Err(ParseError::InvalidValue {
+                    message: format!("Unexpected argument for run: {}", other),
+                    usage: RUN_USAGE,
+                })
+            }
+        }
+        i += 1;
+    }
+    Ok(cmd)
 }
 
 /// Parse a cookies file in one of three auto-detected formats:
@@ -1974,6 +2023,9 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
             }
             Ok(cmd)
         }
+
+        // === Code mode ===
+        "run" => parse_run(&rest, &id),
 
         // === React (requires `open --enable react-devtools`) ===
         "react" => parse_react(&rest, &id),
