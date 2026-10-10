@@ -1,0 +1,158 @@
+---
+title: "Code Mode"
+navTitle: "Code Mode"
+description: "Run one JavaScript program that drives the browser, so an agent finishes multi-step tasks in a single call."
+---
+
+`agent-browser run` executes a JavaScript program that drives the browser. The script can loop, branch, and pass data between steps, then return only the final value. An agent that would otherwise spend one turn and one snapshot per command finishes a multi-step task in one call, with far less output to read.
+
+## Running a script
+
+```bash
+# Inline
+agent-browser run -e 'await open("https://example.com"); return title()'
+
+# From a file
+agent-browser run scrape.js --timeout 300000
+
+# From stdin
+agent-browser run <<'JS'
+await open("https://example.com/search");
+fill("input[name=q]", "agent-browser");
+press("Enter");
+wait({ text: "results" });
+return evalPage(`[...document.querySelectorAll("h3")].map(h => h.textContent)`);
+JS
+```
+
+<table>
+  <thead>
+    <tr><th>Option</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>-e, --eval &lt;code&gt;</code></td><td>Inline script. Otherwise the first argument is a file path, or the script is read from stdin</td></tr>
+    <tr><td><code>--timeout &lt;ms&gt;</code></td><td>Wall-clock budget for the script (default 120000)</td></tr>
+    <tr><td><code>--json</code></td><td>Print <code>{`{success, result, logs, commands, error, code, command}`}</code></td></tr>
+  </tbody>
+</table>
+
+Global flags such as `--session`, `--profile`, and `--auto-connect` apply as usual. Top-level `await` and `return` work, and the returned value is the result. An uncaught error exits with status 1.
+
+## How it works
+
+The script runs in an embedded QuickJS sandbox inside the CLI process. Every `ab(...argv)` call runs an ordinary CLI command through the same parser, policies, and session as `batch`, so domain allowlists, action policies, and confirmations still apply. The helper functions below are thin wrappers over `ab()`.
+
+## API
+
+<table>
+  <thead>
+    <tr><th>Global</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>ab(...argv)</code></td><td>Run any CLI command, for example <code>ab("get", "text", "#title")</code>. Returns the command's JSON data; throws <code>AbError</code> on failure</td></tr>
+    <tr><td><code>AbError</code></td><td>Error class with <code>message</code>, <code>code</code>, and <code>command</code></td></tr>
+    <tr><td><code>open</code>, <code>back</code>, <code>forward</code>, <code>reload</code>, <code>url</code>, <code>title</code></td><td>Navigation and page info</td></tr>
+    <tr><td><code>snapshot(opts)</code></td><td>Options <code>interactive</code>, <code>compact</code>, <code>cursor</code>, <code>urls</code>, <code>depth</code>, <code>selector</code>, <code>delta</code>, <code>full</code>, <code>noRedact</code>. Returns <code>tree</code>, <code>refs</code>, <code>origin</code>, and <code>removedRefs</code></td></tr>
+    <tr><td><code>text</code>, <code>html</code>, <code>value</code>, <code>attr</code>, <code>count</code>, <code>isVisible</code></td><td>Reads by ref or selector</td></tr>
+    <tr><td><code>evalPage(js)</code></td><td>Evaluate JavaScript in the page and return the result</td></tr>
+    <tr><td><code>click</code>, <code>dblclick</code>, <code>fill</code>, <code>type</code>, <code>press</code>, <code>hover</code>, <code>focus</code>, <code>select</code>, <code>check</code>, <code>uncheck</code>, <code>scroll</code>, <code>upload</code>, <code>find</code>, <code>screenshot</code></td><td>Interaction, mirroring the CLI commands of the same name</td></tr>
+    <tr><td><code>wait(arg)</code>, <code>sleep(ms)</code></td><td><code>wait</code> takes milliseconds, a selector, or an object with <code>text</code>, <code>url</code>, <code>load</code>, or <code>fn</code></td></tr>
+    <tr><td><code>store.get</code>, <code>store.set</code>, <code>store.delete</code>, <code>store.keys</code></td><td>JSON values kept per <code>--session</code> across runs (1 MB cap)</td></tr>
+    <tr><td><code>skills.load(name)</code></td><td>Site helpers: <code>github</code>, <code>gmail</code>, <code>google-workspace</code>, <code>linkedin</code></td></tr>
+    <tr><td><code>result(value)</code></td><td>Set the result without returning</td></tr>
+    <tr><td><code>console.log</code>, <code>info</code>, <code>warn</code>, <code>error</code></td><td>Captured and returned as <code>logs</code></td></tr>
+  </tbody>
+</table>
+
+## Examples
+
+Act on refs without a model turn:
+
+```bash
+agent-browser run <<'JS'
+await open("https://example.com/settings");
+const { refs } = snapshot({ interactive: true });
+const boxes = Object.entries(refs).filter(([, r]) => r.role === "checkbox");
+for (const [ref] of boxes) check("@" + ref);
+return boxes.map(([, r]) => r.name);
+JS
+```
+
+Paginate and collect:
+
+```bash
+agent-browser run <<'JS'
+await open("https://example.com/items");
+const items = [];
+for (let page = 0; page < 20; page++) {
+  items.push(...evalPage(`[...document.querySelectorAll(".item")].map(e => e.textContent.trim())`));
+  if (!isVisible("button.next")) break;
+  click("button.next");
+  wait({ load: "domcontentloaded" });
+}
+return items;
+JS
+```
+
+Use a site skill:
+
+```bash
+agent-browser run <<'JS'
+const gh = skills.load("github");
+return gh.listPullRequests("vercel-labs/agent-browser", { limit: 5 });
+JS
+```
+
+See [Skills](/skills) for the available site helpers. Helpers that change anything only draft unless called with `{ confirm: true }`.
+
+## Errors
+
+Failed commands throw `AbError`. Catch it to fall back, or let it propagate. Run-level error codes in `--json` output:
+
+<table>
+  <thead>
+    <tr><th>Code</th><th>Meaning</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>timeout</code></td><td>The script exceeded <code>--timeout</code>, including infinite loops</td></tr>
+    <tr><td><code>syntax_error</code></td><td>The script did not parse</td></tr>
+    <tr><td><code>never_settles</code></td><td>The script awaited a promise that can never resolve</td></tr>
+    <tr><td><code>blocked_command</code></td><td>The script called a command that cannot be nested</td></tr>
+  </tbody>
+</table>
+
+## Sandbox limits
+
+- No filesystem, network, process, `require`, or module access. The browser is reachable only through `ab()` and the helpers.
+- A memory limit applies, and the `--timeout` deadline interrupts runaway code.
+- `run`, `batch`, `chat`, `mcp`, `dashboard`, `install`, and `upgrade` cannot be called from a script.
+- Each run starts with a fresh scope. Use `store` to carry data between runs.
+- Snapshots are [redacted](/snapshots#secret-redaction) by default; pass `snapshot({ noRedact: true })` to opt out.
+
+## MCP
+
+The `agent_browser_run` tool is part of the default `core` profile. It takes `code` (required) and an optional `scriptTimeoutMs`, plus the common arguments such as `session` and `timeoutMs`. The server instructions recommend it for any task with more than one or two steps.
+
+## When to use it
+
+Use code mode once you know what to do: form fills, pagination, loops over rows, extraction across several pages. Use plain commands for a single quick action, or when you need to see an unfamiliar page before deciding what to do.
+
+## Benchmark
+
+The repository's `benchmarks/code-mode` suite compares one command per turn against a single `run` script on three fixture tasks (local run, macOS arm64, debug build, Chrome for Testing, 3 iterations):
+
+<table>
+  <thead>
+    <tr><th>Task</th><th>Mode</th><th>Invocations</th><th>Stdout bytes</th><th>Wall ms (median)</th><th>Correct</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>form</td><td>step</td><td>6</td><td>3232</td><td>305</td><td>3/3</td></tr>
+    <tr><td>form</td><td>run</td><td>1</td><td>133</td><td>197</td><td>3/3</td></tr>
+    <tr><td>paginate</td><td>step</td><td>9</td><td>9525</td><td>167</td><td>3/3</td></tr>
+    <tr><td>paginate</td><td>run</td><td>1</td><td>382</td><td>62</td><td>3/3</td></tr>
+    <tr><td>find-row</td><td>step</td><td>4</td><td>3200</td><td>89</td><td>3/3</td></tr>
+    <tr><td>find-row</td><td>run</td><td>1</td><td>108</td><td>43</td><td>3/3</td></tr>
+  </tbody>
+</table>
+
+Invocations (a proxy for agent turns) dropped from 4 to 9 down to 1, output (a proxy for tokens) shrank 24x to 30x, and wall time was 1.5x to 2.7x faster even before counting model latency per turn, which dominates real agent runs.

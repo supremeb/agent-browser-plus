@@ -57,4 +57,18 @@ If the binary does not support `agent-browser run`, RUN mode is reported as skip
 
 ## Results
 
-Results to be filled from a local run.
+Local run on macOS arm64 with a debug build of the CLI, Chrome for Testing, and 3 iterations:
+
+<table>
+<tr><th>Task</th><th>Mode</th><th>Invocations</th><th>Stdout bytes</th><th>Wall ms (median)</th><th>Correct</th></tr>
+<tr><td>form</td><td>step</td><td>6</td><td>3232</td><td>305</td><td>3/3</td></tr>
+<tr><td>form</td><td>run</td><td>1</td><td>133</td><td>197</td><td>3/3</td></tr>
+<tr><td>paginate</td><td>step</td><td>9</td><td>9525</td><td>167</td><td>3/3</td></tr>
+<tr><td>paginate</td><td>run</td><td>1</td><td>382</td><td>62</td><td>3/3</td></tr>
+<tr><td>find-row</td><td>step</td><td>4</td><td>3200</td><td>89</td><td>3/3</td></tr>
+<tr><td>find-row</td><td>run</td><td>1</td><td>108</td><td>43</td><td>3/3</td></tr>
+</table>
+
+Invocations (a proxy for agent turns) dropped from 4 to 9 down to 1, output bytes (a proxy for tokens) shrank 24x to 30x, and wall time was 1.5x to 2.7x faster even before counting model latency per turn, which dominates real agent runs.
+
+Numbers vary with hardware, build profile, and Chrome version; rerun the script to reproduce them on your machine.

@@ -3455,6 +3455,7 @@ Snapshot Diff:
     -s, --selector <sel>     Scope snapshot to a CSS selector or @ref
     -c, --compact            Use compact snapshot format
     -d, --depth <n>          Limit snapshot tree depth
+        --no-redact          Show password, one-time-code, and card values verbatim
 
   Without --baseline, compares against the last snapshot taken in this session.
 

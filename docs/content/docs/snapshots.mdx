@@ -28,6 +28,7 @@ agent-browser snapshot -i -c -d 5         # Combine options
     <tr><td><code>-c, --compact</code></td><td>Remove empty structural elements</td></tr>
     <tr><td><code>-d, --depth</code></td><td>Limit tree depth</td></tr>
     <tr><td><code>-s, --selector</code></td><td>Scope to CSS selector</td></tr>
+    <tr><td><code>--no-redact</code></td><td>Show secret field values and one-time codes verbatim</td></tr>
   </tbody>
 </table>
 
@@ -43,6 +44,34 @@ agent-browser snapshot -i
 # @e3 [input type="email"] placeholder="Email"
 # @e4 [link] "Learn more"
 ```
+
+## Secret redaction
+
+Snapshots redact secrets by default so they do not end up in agent context or logs:
+
+- Values of fields whose accessible name indicates a password, passcode, one-time or verification code, security code, 2FA/MFA code, CVV/CVC, card number, SSN, PIN, token, secret, or API key render as `[redacted]`, including the value text mirrored inside the field.
+- Runs of 4 to 8 digits near words like "code", "OTP", "verification", or "PIN" in page text are replaced with `[redacted]`. Plain numbers such as order ids and prices are untouched.
+
+```bash
+agent-browser snapshot
+# - textbox "Password" [ref=e4]: [redacted]
+# - StaticText "Your verification code is [redacted]"
+```
+
+Opt out only when the task needs the raw values:
+
+<table>
+  <thead>
+    <tr><th>Surface</th><th>Opt out</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>CLI</td><td><code>snapshot --no-redact</code>, <code>diff snapshot --no-redact</code></td></tr>
+    <tr><td>MCP</td><td><code>noRedact: true</code> on the snapshot tools</td></tr>
+    <tr><td>Code mode</td><td><code>snapshot({`{ noRedact: true }`})</code></td></tr>
+  </tbody>
+</table>
+
+Explicit reads such as `get value` are not redacted.
 
 ## Using refs
 

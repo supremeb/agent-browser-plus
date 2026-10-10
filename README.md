@@ -145,6 +145,7 @@ agent-browser screenshot --screenshot-format jpeg --screenshot-quality 80
 agent-browser pdf <path>              # Save as PDF
 agent-browser snapshot                # Accessibility tree with refs (best for AI)
 agent-browser eval <js>               # Run JavaScript (-b for base64, --stdin for piped input)
+agent-browser run <file.js>           # Code mode: run a script that drives the browser (-e '<code>', or stdin)
 agent-browser connect <port>          # Connect to browser via CDP
 agent-browser stream enable [--port <port>]  # Start runtime WebSocket streaming
 agent-browser webmcp list                     # List experimental page tools
@@ -300,6 +301,41 @@ echo '[
   ["screenshot", "result.png"]
 ]' | agent-browser batch --json
 ```
+
+### Code Mode
+
+`agent-browser run` executes one JavaScript program that drives the browser. The script can loop, branch, and pass data between steps, then return only the final value. An agent that would otherwise spend one turn (and one snapshot) per command finishes a multi-step task in a single call, with far less output to read.
+
+```bash
+# Inline
+agent-browser run -e 'await open("https://example.com"); return title()'
+
+# From a file, with a longer budget
+agent-browser run scrape.js --timeout 300000
+
+# From stdin
+agent-browser run <<'JS'
+await open("https://example.com/search");
+fill("input[name=q]", "agent-browser");
+press("Enter");
+wait({ text: "results" });
+return evalPage(`[...document.querySelectorAll("h3")].map(h => h.textContent)`);
+JS
+```
+
+| Option | Description |
+| --- | --- |
+| `-e, --eval <code>` | Inline script (otherwise a file path, or stdin) |
+| `--timeout <ms>` | Wall-clock budget for the script (default: 120000) |
+| `--json` | Print `{success, result, logs, commands, error, code, command}` |
+
+Top-level `await` and `return` work; the returned value is the result. Every `ab(...argv)` call runs an ordinary CLI command through the same parser, policies, and session as `batch`. Convenience globals cover navigation (`open`, `back`, `forward`, `reload`, `url`, `title`), reading (`snapshot`, `text`, `html`, `value`, `attr`, `count`, `isVisible`, `evalPage`), interaction (`click`, `fill`, `type`, `press`, `select`, `check`, `upload`, `find`, `screenshot`, and more), waiting (`wait`, `sleep`), a per-session JSON `store` that persists across runs, `skills.load(name)` for site helpers, and `console.*`. `snapshot({ interactive: true })` returns `{ tree, refs, origin, removedRefs }`, so scripts can choose refs themselves. Failed commands throw `AbError` with `message`, `code`, and `command`; an uncaught error exits with status 1.
+
+The script runs in an embedded QuickJS sandbox inside the CLI process with no filesystem, network, process, or module access, a memory limit, and the `--timeout` deadline (which also stops infinite loops). `run`, `batch`, `chat`, `mcp`, `dashboard`, `install`, and `upgrade` cannot be nested. Error codes include `timeout`, `syntax_error`, `never_settles`, and `blocked_command`.
+
+MCP clients get the same capability through the `agent_browser_run` tool in the default `core` profile (`code`, optional `scriptTimeoutMs`, plus the common `session` and `timeoutMs` arguments).
+
+In the [code mode benchmark](benchmarks/code-mode/README.md), three fixture tasks went from 4 to 9 invocations down to 1, with 24x to 30x less output and 1.5x to 2.7x lower wall time before counting model latency. See [skill-data/core/references/code-mode.md](skill-data/core/references/code-mode.md) for the full API and patterns.
 
 ### Clipboard
 
@@ -580,6 +616,22 @@ agent-browser skills get --all        # Output every skill
 agent-browser skills path [name]      # Print skill directory path
 ```
 
+Site skills with [code mode](#code-mode) helpers load inside `agent-browser run` with `skills.load(name)`:
+
+- `github`: repositories, pull requests, issues, code search, notifications, and a guarded `commentOnIssue`
+- `gmail`: inbox, search, threads, drafts, and a guarded `send`
+- `google-workspace`: Docs, Sheets, Drive, and Calendar (reads through export URLs, guarded writes)
+- `linkedin`: profile lookups, short people searches, feed, messages, and guarded messages and invitations for the logged-in user's own tasks
+
+Helpers that change anything only draft unless called with `{ confirm: true }`. GitHub reads work on public repos without logging in; Gmail, Google Workspace, and LinkedIn need a signed in browser via `--profile <name>` or `--auto-connect`.
+
+```bash
+agent-browser run <<'JS'
+const gh = skills.load("github");
+return gh.listPullRequests("vercel-labs/agent-browser", { limit: 5 });
+JS
+```
+
 Serves bundled skill content that always matches the installed CLI version. AI agents use this to get current instructions rather than relying on cached copies. Set `AGENT_BROWSER_SKILLS_DIR` to override the skills directory path.
 
 ### MCP Server
@@ -596,7 +648,7 @@ The default tools profile is `core`, which keeps MCP context small for everyday 
 
 Profiles:
 
-- `core` — Default. Navigation, snapshots, interaction, waits, reads, screenshots, JavaScript eval, close, tab basics, and profile discovery
+- `core` — Default. Code mode (`agent_browser_run`), navigation, snapshots, interaction, waits, reads, screenshots, JavaScript eval, close, tab basics, and profile discovery
 - `network` — Network routes, request inspection, HAR, headers, credentials, offline
 - `state` — Cookies, storage, auth, saved state, sessions, profiles, skills
 - `debug` — Console/errors, tracing, profiling, recording, a11y audit, clipboard, plugins, doctor, dashboard, install, upgrade, chat, diff, batch, confirm/deny
@@ -607,6 +659,7 @@ Profiles:
 
 Common tools include:
 
+- `agent_browser_run` (code mode; the server instructions recommend it for multi-step tasks)
 - `agent_browser_tools_profiles`
 - `agent_browser_open`
 - `agent_browser_snapshot`
@@ -1006,8 +1059,11 @@ agent-browser snapshot --delta --full      # Force full state and refresh the ba
 | `-s, --selector <sel>` | Scope to CSS selector                                                   |
 | `--delta`              | Return full state once, then `unchanged` or a structural JSON delta     |
 | `--full`               | Force full state and update the delta baseline                          |
+| `--no-redact`          | Show secret field values and one-time codes verbatim                    |
 
 `--delta` returns `full`, `unchanged`, or incremental updates per tab and option set. It falls back to full state after URL changes or when a delta would not save space. See the [delta response format](skill-data/core/references/commands.md#snapshot-page-analysis) for applying updates.
+
+**Secret redaction.** Snapshots redact secrets by default. Values of fields whose accessible name indicates a password, passcode, one-time or verification code, 2FA/MFA code, CVV/CVC, card number, SSN, PIN, token, secret, or API key render as `[redacted]`, including the value text mirrored inside the field. Runs of 4 to 8 digits near words like "code", "OTP", "verification", or "PIN" in page text are also replaced with `[redacted]`; plain numbers such as order ids are untouched. Opt out with `snapshot --no-redact`, `diff snapshot --no-redact`, MCP `noRedact: true`, or `snapshot({ noRedact: true })` in code mode. Explicit reads such as `get value` are not redacted.
 
 ## Annotated Screenshots
 
@@ -1329,6 +1385,8 @@ agent-browser fill @e3 "input text"
 # 4. Get new snapshot if page changed
 agent-browser snapshot -i --json
 ```
+
+**Run as code.** Once the agent knows what to do, multi-step work (fill a form and read the result, paginate, loop over rows) is cheaper as one [`agent-browser run`](#code-mode) script than as a chain of single commands: one turn instead of many, and only the final value comes back.
 
 ### Command Chaining
 

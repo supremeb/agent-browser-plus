@@ -33,6 +33,22 @@ agent-browser snapshot -i       # 4. Re-snapshot after any page change
 
 Refs (`@e1`, `@e2`, ...) can be reused across snapshots. Take a fresh snapshot after navigation or to observe page changes.
 
+## Code mode (fewer turns)
+
+For any task with more than one or two steps, prefer `agent-browser run`. One JavaScript program can navigate, loop, branch, and extract, then return only the final value, instead of costing one agent turn and one full snapshot per command:
+
+```bash
+agent-browser run <<'JS'
+await open("https://example.com/login");
+fill("#email", "user@example.com");
+click("button[type=submit]");
+wait({ text: "Dashboard" });
+return { title: title(), items: evalPage(`[...document.querySelectorAll(".item")].map(e => e.textContent)`) };
+JS
+```
+
+`ab(...argv)` runs any CLI command; `snapshot({ interactive: true })` returns `{ tree, refs }` so the script can pick refs itself; `store` keeps JSON per session across runs. Use plain commands when you first need to look at an unfamiliar page, then script the rest. Site helpers for GitHub, Gmail, Google Workspace, and LinkedIn load with `skills.load('<name>')`. Full API, patterns, and limits: [references/code-mode.md](references/code-mode.md). From MCP, use the `agent_browser_run` tool.
+
 ## Always use your own session
 
 Before your first command, set a named session for the whole task:
@@ -101,6 +117,8 @@ agent-browser snapshot -i --delta --full  # force full state and refresh baselin
 ```
 
 Use `--delta` to reduce repeated output and `--full` to reset the baseline.
+
+Snapshots redact secrets by default: values of password, one-time code, 2FA, CVV, card number, SSN, PIN, token, and API key fields show as `[redacted]`, and 4 to 8 digit codes next to words like "code", "OTP", or "PIN" in page text are replaced too. Plain numbers such as order ids are left alone. Add `--no-redact` only when the task needs the raw value; explicit reads such as `get value` are never redacted.
 
 Snapshot output looks like:
 
@@ -512,6 +530,12 @@ Engine setup and limits: [Lightpanda](https://agent-browser.dev/engines/lightpan
 - **Vercel Sandbox microVMs**: `agent-browser skills get vercel-sandbox`
 - **Vercel deployment behind Authentication, SSO, or Deployment Protection**: `agent-browser skills get protected-vercel-deployments`
 - **AWS Bedrock AgentCore cloud browser**: `agent-browser skills get agentcore`
+- **GitHub pull requests, issues, code search, notifications**: `agent-browser skills get github`
+- **Gmail inbox, search, threads, drafts**: `agent-browser skills get gmail`
+- **Google Docs, Sheets, Drive, Calendar**: `agent-browser skills get google-workspace`
+- **LinkedIn profile lookups, messages, invitations (user's own tasks only)**: `agent-browser skills get linkedin`
+
+The last four ship code mode helpers for `agent-browser run` via `skills.load('<name>')`.
 
 ## Accessibility audits
 
@@ -570,6 +594,7 @@ agent-browser skills get core --full
 That pulls in:
 
 - `references/commands.md` — every command, flag, alias
+- `references/code-mode.md` — `agent-browser run` API, patterns, error codes, sandbox limits
 - `references/snapshot-refs.md` — deep dive on the snapshot + ref model
 - `references/authentication.md` — auth vault, credential plugins, credential handling
 - `references/trust-boundaries.md` — safety rules for driving a real browser
