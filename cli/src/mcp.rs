@@ -138,6 +138,7 @@ const TOOL_DIFF_SNAPSHOT: &str = "agent_browser_diff_snapshot";
 const TOOL_DIFF_SCREENSHOT: &str = "agent_browser_diff_screenshot";
 const TOOL_DIFF_URL: &str = "agent_browser_diff_url";
 const TOOL_BATCH: &str = "agent_browser_batch";
+const TOOL_RUN: &str = "agent_browser_run";
 const TOOL_REACT_TREE: &str = "agent_browser_react_tree";
 const TOOL_REACT_INSPECT: &str = "agent_browser_react_inspect";
 const TOOL_REACT_RENDERS_START: &str = "agent_browser_react_renders_start";
@@ -338,6 +339,7 @@ impl Default for McpConfig {
 
 const CORE_PROFILE_TOOLS: &[&str] = &[
     TOOL_TOOLS_PROFILES,
+    TOOL_RUN,
     TOOL_OPEN,
     TOOL_READ,
     TOOL_SNAPSHOT,
@@ -695,7 +697,7 @@ fn initialize_result(params: Option<&Value>, config: &McpConfig) -> Value {
             "version": env!("CARGO_PKG_VERSION")
         },
         "instructions": format!(
-            "Use the typed agent_browser_* tools to control a browser. Active MCP tools profile(s): {}. Prefer agent_browser_snapshot after navigation to obtain stable element refs before clicking or typing. Use agent_browser_tools_profiles to see available startup profiles.",
+            "Use the typed agent_browser_* tools to control a browser. Active MCP tools profile(s): {}. For any task with more than one or two steps, prefer agent_browser_run: one JavaScript program can navigate, loop, branch, and extract without a model turn per command, and skills.load('<site>') adds site helpers. Prefer agent_browser_snapshot after navigation to obtain stable element refs before clicking or typing. Use agent_browser_tools_profiles to see available startup profiles.",
             config.profile_names().join(", ")
         )
     })
@@ -1635,6 +1637,16 @@ fn parity_tools() -> Vec<Value> {
             &["commands"],
         ),
         tool(
+            TOOL_RUN,
+            "Run script (code mode)",
+            "Run a JavaScript program that drives the browser in one call. Prefer this for any multi-step task: loops, conditionals, and extraction run without a model turn per step. Globals: ab(...argv) runs any CLI command and returns its JSON data (throws AbError with .code); helpers open, snapshot({interactive, selector, delta}) -> {tree, refs}, click, fill, type, press, text, value, attr, count, evalPage(js), find, wait, screenshot, url, title, sleep; store.get/set persist per session across runs; skills.load('github'|'gmail'|'google-workspace'|'linkedin') returns site helpers; console.log output is returned. Top-level await and return work; the returned value is the result. No filesystem, network, or require.",
+            json!({
+                "code": { "type": "string", "description": "JavaScript source. Use `return value` to produce the result." },
+                "scriptTimeoutMs": { "type": "integer", "minimum": 1, "description": "Script wall-clock budget in milliseconds (default 120000)." }
+            }),
+            &["code"],
+        ),
+        tool(
             TOOL_REACT_TREE,
             "React tree",
             "Inspect React tree.",
@@ -2351,6 +2363,7 @@ fn call_tool(params: Option<&Value>, config: &McpConfig) -> Result<Value, Protoc
         TOOL_DIFF_SCREENSHOT => call_diff_screenshot(arguments),
         TOOL_DIFF_URL => call_diff_url(arguments),
         TOOL_BATCH => call_batch(arguments),
+        TOOL_RUN => call_run(arguments),
         TOOL_REACT_TREE => call_react_tree(arguments),
         TOOL_REACT_INSPECT => call_react_inspect(arguments),
         TOOL_REACT_RENDERS_START => call_react_renders_start(arguments),
@@ -3425,6 +3438,40 @@ fn call_batch(arguments: &Value) -> Result<Value, ProtocolError> {
     call_cli_tool(arguments, args, Some(stdin))
 }
 
+/// Code mode: the script goes to `agent-browser run` on stdin so it never
+/// appears in process listings, and the process deadline is kept above the
+/// script deadline so the script's own timeout error is what gets reported.
+fn call_run(arguments: &Value) -> Result<Value, ProtocolError> {
+    let (args, arguments, code) = run_tool_invocation(arguments)?;
+    call_cli_tool(&arguments, args, Some(code))
+}
+
+/// Build the `run` argv, the effective tool arguments (with the process
+/// deadline filled in), and the script body for [`call_run`].
+fn run_tool_invocation(arguments: &Value) -> Result<(Vec<String>, Value, String), ProtocolError> {
+    let code = required_string(arguments, "code")?;
+    let mut args = vec!["run".to_string()];
+    let script_timeout = optional_u64(arguments, "scriptTimeoutMs")?;
+    if let Some(ms) = script_timeout {
+        if ms == 0 {
+            return Err(ProtocolError::invalid_params(
+                "scriptTimeoutMs must be a positive integer",
+            ));
+        }
+        args.push("--timeout".to_string());
+        args.push(ms.to_string());
+    }
+    let mut arguments = arguments.clone();
+    if arguments.get("timeoutMs").is_none() {
+        let budget = script_timeout.unwrap_or(crate::run::DEFAULT_TIMEOUT_MS);
+        arguments["timeoutMs"] = json!(budget.saturating_add(RUN_PROCESS_MARGIN_MS));
+    }
+    Ok((args, arguments, code))
+}
+
+/// Headroom for daemon start-up and browser launch on top of the script budget.
+const RUN_PROCESS_MARGIN_MS: u64 = 30_000;
+
 fn call_react_tree(arguments: &Value) -> Result<Value, ProtocolError> {
     let mut args = vec!["react".to_string(), "tree".to_string()];
     append_react_raw_json_arg(arguments, &mut args)?;
@@ -4258,6 +4305,48 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn run_tool_is_in_core_profile_and_requires_code() {
+        let core = tools_for_config(&McpConfig::core());
+        let run = core
+            .iter()
+            .find(|t| t["name"] == TOOL_RUN)
+            .expect("agent_browser_run in core profile");
+        assert_eq!(run["inputSchema"]["required"], json!(["code"]));
+        assert!(run["inputSchema"]["properties"]["scriptTimeoutMs"].is_object());
+        assert!(run["inputSchema"]["properties"]["session"].is_object());
+
+        let err = call_tool(
+            Some(&json!({ "name": TOOL_RUN, "arguments": {} })),
+            &McpConfig::core(),
+        )
+        .unwrap_err();
+        assert!(format!("{:?}", err).contains("code"), "{:?}", err);
+    }
+
+    #[test]
+    fn run_tool_builds_cli_invocation() {
+        let (args, effective, code) = run_tool_invocation(&json!({
+            "code": "return 1",
+            "scriptTimeoutMs": 5000,
+            "session": "s1"
+        }))
+        .unwrap();
+        assert_eq!(args, vec!["run", "--timeout", "5000"]);
+        assert_eq!(code, "return 1");
+        assert_eq!(effective["timeoutMs"], json!(5000 + RUN_PROCESS_MARGIN_MS));
+
+        let cli = cli_tool_args(&effective, args, Some("s1")).unwrap();
+        assert_eq!(cli.first().map(String::as_str), Some("--json"));
+        assert!(cli.windows(2).any(|w| w == ["--session", "s1"]));
+        assert!(cli.ends_with(&["run".to_string(), "--timeout".to_string(), "5000".to_string()]));
+
+        let (_, explicit, _) =
+            run_tool_invocation(&json!({ "code": "1", "timeoutMs": 999 })).unwrap();
+        assert_eq!(explicit["timeoutMs"], json!(999));
+        assert!(run_tool_invocation(&json!({ "code": "1", "scriptTimeoutMs": 0 })).is_err());
+    }
 
     #[test]
     fn tools_list_contains_typed_tools() {
