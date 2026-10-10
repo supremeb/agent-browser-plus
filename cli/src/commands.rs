@@ -189,31 +189,41 @@ fn parse_run(rest: &[&str], id: &str) -> Result<Value, ParseError> {
     while i < rest.len() {
         match rest[i] {
             "-e" | "--eval" => {
-                let code = rest.get(i + 1).ok_or_else(|| ParseError::MissingArguments {
-                    context: "run -e".to_string(),
-                    usage: RUN_USAGE,
-                })?;
+                let code = rest
+                    .get(i + 1)
+                    .ok_or_else(|| ParseError::MissingArguments {
+                        context: "run -e".to_string(),
+                        usage: RUN_USAGE,
+                    })?;
                 cmd["code"] = json!(code);
                 i += 1;
             }
             "--timeout" => {
-                let raw = rest.get(i + 1).ok_or_else(|| ParseError::MissingArguments {
-                    context: "run --timeout".to_string(),
-                    usage: RUN_USAGE,
-                })?;
+                let raw = rest
+                    .get(i + 1)
+                    .ok_or_else(|| ParseError::MissingArguments {
+                        context: "run --timeout".to_string(),
+                        usage: RUN_USAGE,
+                    })?;
                 let ms = raw
                     .parse::<u64>()
                     .ok()
                     .filter(|ms| *ms > 0)
                     .ok_or_else(|| ParseError::InvalidValue {
-                        message: format!("Invalid --timeout value: {} (expected milliseconds > 0)", raw),
+                        message: format!(
+                            "Invalid --timeout value: {} (expected milliseconds > 0)",
+                            raw
+                        ),
                         usage: RUN_USAGE,
                     })?;
                 cmd["timeoutMs"] = json!(ms);
                 i += 1;
             }
             "-" => {}
-            arg if !arg.starts_with('-') && cmd.get("file").is_none() && cmd.get("code").is_none() => {
+            arg if !arg.starts_with('-')
+                && cmd.get("file").is_none()
+                && cmd.get("code").is_none() =>
+            {
                 cmd["file"] = json!(arg);
             }
             other => {

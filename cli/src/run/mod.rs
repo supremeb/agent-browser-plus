@@ -27,7 +27,15 @@ const MAX_STACK_BYTES: usize = 1024 * 1024;
 const MAX_LOG_BYTES: usize = 1024 * 1024;
 
 /// Commands that cannot be nested inside a script.
-const BLOCKED_COMMANDS: &[&str] = &["run", "batch", "chat", "mcp", "dashboard", "install", "upgrade"];
+const BLOCKED_COMMANDS: &[&str] = &[
+    "run",
+    "batch",
+    "chat",
+    "mcp",
+    "dashboard",
+    "install",
+    "upgrade",
+];
 
 /// Executes one CLI argv and returns `{success, data, error, code, warning}`.
 pub type Bridge = Box<dyn FnMut(&[String]) -> Value + 'static>;
@@ -241,8 +249,14 @@ pub fn run_script(code: &str, bridge: Bridge, options: RunOptions) -> RunOutcome
                     ..base
                 }
             } else {
-                let name = parsed.get("name").and_then(Value::as_str).unwrap_or("Error");
-                let message = parsed.get("message").and_then(Value::as_str).unwrap_or("Script failed");
+                let name = parsed
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Error");
+                let message = parsed
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Script failed");
                 let error = if name == "AbError" || name == "Error" {
                     message.to_string()
                 } else {
@@ -250,7 +264,10 @@ pub fn run_script(code: &str, bridge: Bridge, options: RunOptions) -> RunOutcome
                 };
                 RunOutcome {
                     error: Some(error),
-                    error_code: parsed.get("code").and_then(Value::as_str).map(str::to_string),
+                    error_code: parsed
+                        .get("code")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
                     error_command: parsed
                         .get("command")
                         .and_then(|c| serde_json::from_value(c.clone()).ok()),
@@ -275,27 +292,30 @@ fn install_host_functions<'js>(
     let s = shared.clone();
     globals.set(
         "__ab",
-        Function::new(ctx.clone(), move |ctx: Ctx<'js>, argv_json: String| -> rquickjs::Result<String> {
-            let argv: Vec<String> = serde_json::from_str(&argv_json)
-                .map_err(|e| throw(&ctx, &format!("ab(): invalid arguments: {}", e)))?;
-            let mut state = s.borrow_mut();
-            if Instant::now() >= state.deadline {
-                return Err(throw(&ctx, "Script deadline reached"));
-            }
-            if let Some(first) = argv.first() {
-                if BLOCKED_COMMANDS.contains(&first.as_str()) {
-                    return Ok(json!({
+        Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, argv_json: String| -> rquickjs::Result<String> {
+                let argv: Vec<String> = serde_json::from_str(&argv_json)
+                    .map_err(|e| throw(&ctx, &format!("ab(): invalid arguments: {}", e)))?;
+                let mut state = s.borrow_mut();
+                if Instant::now() >= state.deadline {
+                    return Err(throw(&ctx, "Script deadline reached"));
+                }
+                if let Some(first) = argv.first() {
+                    if BLOCKED_COMMANDS.contains(&first.as_str()) {
+                        return Ok(json!({
                         "success": false,
                         "error": format!("`{}` cannot be called from inside a run script", first),
                         "code": "blocked_command",
                     })
                     .to_string());
+                    }
                 }
-            }
-            state.commands += 1;
-            let resp = (state.bridge)(&argv);
-            Ok(resp.to_string())
-        })?,
+                state.commands += 1;
+                let resp = (state.bridge)(&argv);
+                Ok(resp.to_string())
+            },
+        )?,
     )?;
 
     let s = shared.clone();
@@ -332,7 +352,11 @@ fn install_host_functions<'js>(
         "__store",
         Function::new(
             ctx.clone(),
-            move |ctx: Ctx<'js>, op: String, key: String, value_json: String| -> rquickjs::Result<String> {
+            move |ctx: Ctx<'js>,
+                  op: String,
+                  key: String,
+                  value_json: String|
+                  -> rquickjs::Result<String> {
                 let mut state = s.borrow_mut();
                 let result = match op.as_str() {
                     "get" => Ok(state.store.get(&key).unwrap_or(Value::Null)),
@@ -340,7 +364,10 @@ fn install_host_functions<'js>(
                         let value: Value = serde_json::from_str(&value_json).unwrap_or(Value::Null);
                         state.store.set(&key, value).map(|_| Value::Null)
                     }
-                    "delete" => state.store.delete(&key).map(|old| old.unwrap_or(Value::Null)),
+                    "delete" => state
+                        .store
+                        .delete(&key)
+                        .map(|old| old.unwrap_or(Value::Null)),
                     "keys" => Ok(json!(state.store.keys())),
                     other => Err(format!("unknown store op {}", other)),
                 };
@@ -354,9 +381,12 @@ fn install_host_functions<'js>(
 
     globals.set(
         "__skillSource",
-        Function::new(ctx.clone(), move |ctx: Ctx<'js>, name: String| -> rquickjs::Result<String> {
-            skills(&name).map_err(|e| throw(&ctx, &e))
-        })?,
+        Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, name: String| -> rquickjs::Result<String> {
+                skills(&name).map_err(|e| throw(&ctx, &e))
+            },
+        )?,
     )?;
 
     Ok(())
@@ -389,14 +419,25 @@ pub fn run_script_with_executor(
             let bridge_tx = worker_tx.clone();
             let bridge: Bridge = Box::new(move |argv: &[String]| {
                 let (reply_tx, reply_rx) = mpsc::channel();
-                if bridge_tx.send(BridgeMsg::Exec(argv.to_vec(), reply_tx)).is_err() {
+                if bridge_tx
+                    .send(BridgeMsg::Exec(argv.to_vec(), reply_tx))
+                    .is_err()
+                {
                     return json!({"success": false, "error": "command bridge closed"});
                 }
                 reply_rx
                     .recv()
                     .unwrap_or_else(|_| json!({"success": false, "error": "command bridge closed"}))
             });
-            let outcome = run_script(&code, bridge, RunOptions { timeout, store, skills });
+            let outcome = run_script(
+                &code,
+                bridge,
+                RunOptions {
+                    timeout,
+                    store,
+                    skills,
+                },
+            );
             let _ = worker_tx.send(BridgeMsg::Done(Box::new(outcome)));
         });
     drop(tx);
@@ -446,7 +487,8 @@ pub fn read_script(cmd: &Value) -> Result<String, String> {
         return Ok(code.to_string());
     }
     if let Some(path) = cmd.get("file").and_then(Value::as_str) {
-        return std::fs::read_to_string(path).map_err(|e| format!("Failed to read script {}: {}", path, e));
+        return std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read script {}: {}", path, e));
     }
     use std::io::Read as _;
     let mut code = String::new();

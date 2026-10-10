@@ -9,7 +9,9 @@ use super::*;
 
 fn test_skills(name: &str) -> Result<String, String> {
     match name {
-        "site" => Ok("module.exports = { hello: (n) => 'hi ' + n, title: () => title() };".to_string()),
+        "site" => {
+            Ok("module.exports = { hello: (n) => 'hi ' + n, title: () => title() };".to_string())
+        }
         other => Err(format!("Skill '{}' not found", other)),
     }
 }
@@ -118,8 +120,12 @@ fn helpers_build_cli_argv_and_unwrap_data() {
 #[test]
 fn command_errors_are_catchable_with_code() {
     let h = Harness::new();
-    let out = h.run("try { ab('fail'); } catch (e) { return [e.name, e.code, e.message, e.command]; }");
-    assert_eq!(out.result, Some(json!(["AbError", "tab_gone", "Tab is gone", ["fail"]])));
+    let out =
+        h.run("try { ab('fail'); } catch (e) { return [e.name, e.code, e.message, e.command]; }");
+    assert_eq!(
+        out.result,
+        Some(json!(["AbError", "tab_gone", "Tab is gone", ["fail"]]))
+    );
 }
 
 #[test]
@@ -137,7 +143,11 @@ fn plain_errors_keep_their_type() {
     let h = Harness::new();
     let out = h.run("null.x;");
     assert!(!out.success);
-    assert!(out.error.as_deref().unwrap().starts_with("TypeError"), "{:?}", out.error);
+    assert!(
+        out.error.as_deref().unwrap().starts_with("TypeError"),
+        "{:?}",
+        out.error
+    );
 }
 
 #[test]
@@ -169,10 +179,17 @@ fn never_settling_promise_is_reported() {
 #[test]
 fn sandbox_has_no_host_escape_hatches() {
     let h = Harness::new();
-    let out = h.run("return [typeof require, typeof process, typeof fetch, typeof std, typeof os];");
+    let out =
+        h.run("return [typeof require, typeof process, typeof fetch, typeof std, typeof os];");
     assert_eq!(
         out.result,
-        Some(json!(["undefined", "undefined", "undefined", "undefined", "undefined"]))
+        Some(json!([
+            "undefined",
+            "undefined",
+            "undefined",
+            "undefined",
+            "undefined"
+        ]))
     );
 }
 
@@ -246,16 +263,36 @@ fn repo_skills(name: &str) -> Result<String, String> {
 #[test]
 fn shipped_site_skills_load_in_the_sandbox() {
     let expected: &[(&str, &[&str])] = &[
-        ("github", &["listPullRequests", "listIssues", "readPullRequest", "readIssue", "commentOnIssue"]),
+        (
+            "github",
+            &[
+                "listPullRequests",
+                "listIssues",
+                "readPullRequest",
+                "readIssue",
+                "commentOnIssue",
+            ],
+        ),
         ("gmail", &["inbox", "search", "readThread", "draft", "send"]),
-        ("google-workspace", &["docs", "sheets", "drive", "calendar", "parseId"]),
-        ("linkedin", &["profile", "searchPeople", "feed", "messages", "sendMessage", "connect"]),
+        (
+            "google-workspace",
+            &["docs", "sheets", "drive", "calendar", "parseId"],
+        ),
+        (
+            "linkedin",
+            &[
+                "profile",
+                "searchPeople",
+                "feed",
+                "messages",
+                "sendMessage",
+                "connect",
+            ],
+        ),
     ];
     let dir = tempfile::tempdir().unwrap();
     for (name, functions) in expected {
-        let code = format!(
-            "const api = skills.load('{name}'); return Object.keys(api);"
-        );
+        let code = format!("const api = skills.load('{name}'); return Object.keys(api);");
         let out = run_script(
             &code,
             Box::new(|argv: &[String]| json!({"success": true, "data": {"argv": argv}})),
@@ -268,7 +305,10 @@ fn shipped_site_skills_load_in_the_sandbox() {
         assert!(out.success, "{name}: {:?}", out.error);
         let keys: Vec<String> = serde_json::from_value(out.result.unwrap()).unwrap();
         for f in *functions {
-            assert!(keys.iter().any(|k| k == f), "{name} is missing {f}: {keys:?}");
+            assert!(
+                keys.iter().any(|k| k == f),
+                "{name} is missing {f}: {keys:?}"
+            );
         }
     }
 }
@@ -295,10 +335,16 @@ fn shipped_mutating_helpers_do_not_submit_without_confirm() {
         },
     );
     assert!(out.success, "{:?}", out.error);
-    assert_eq!(out.result.as_ref().and_then(|r| r.get("drafted")), Some(&json!(true)));
+    assert_eq!(
+        out.result.as_ref().and_then(|r| r.get("drafted")),
+        Some(&json!(true))
+    );
     for argv in calls.borrow().iter() {
         assert!(
-            !matches!(argv.first().map(String::as_str), Some("type" | "press" | "fill" | "keyboard")),
+            !matches!(
+                argv.first().map(String::as_str),
+                Some("type" | "press" | "fill" | "keyboard")
+            ),
             "unconfirmed setCell issued {argv:?}"
         );
     }

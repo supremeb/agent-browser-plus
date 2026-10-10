@@ -263,7 +263,7 @@ impl ToolProfile {
 
     fn description(self) -> &'static str {
         match self {
-            Self::Core => "Everyday browser automation with navigation, snapshots, common interaction, waits, screenshots, basic reads, tab basics, JavaScript eval, close, and profile discovery.",
+            Self::Core => "Everyday browser automation with code mode (agent_browser_run), navigation, snapshots, common interaction, waits, screenshots, basic reads, tab basics, JavaScript eval, close, and profile discovery.",
             Self::Network => "Network interception, request inspection, HAR capture, headers, credentials, and offline mode.",
             Self::State => "Cookies, storage, auth profiles, saved browser state, sessions, Chrome profiles, and bundled skills.",
             Self::Debug => "Console/errors, highlighting, DevTools, tracing, profiling, accessibility audits, PDF, downloads/uploads, recording, clipboard, plugin registry and plugin command.run, doctor, dashboard, install, upgrade, and chat.",
@@ -4347,7 +4347,11 @@ mod tests {
         let cli = cli_tool_args(&effective, args, Some("s1")).unwrap();
         assert_eq!(cli.first().map(String::as_str), Some("--json"));
         assert!(cli.windows(2).any(|w| w == ["--session", "s1"]));
-        assert!(cli.ends_with(&["run".to_string(), "--timeout".to_string(), "5000".to_string()]));
+        assert!(cli.ends_with(&[
+            "run".to_string(),
+            "--timeout".to_string(),
+            "5000".to_string()
+        ]));
 
         let (_, explicit, _) =
             run_tool_invocation(&json!({ "code": "1", "timeoutMs": 999 })).unwrap();

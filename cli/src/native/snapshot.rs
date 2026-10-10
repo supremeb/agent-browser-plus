@@ -1430,7 +1430,10 @@ fn contains_term(haystack: &str, term: &str) -> bool {
     while let Some(pos) = hay[start..].find(term) {
         let begin = start + pos;
         let end = begin + term.len();
-        let before_ok = hay[..begin].chars().next_back().is_none_or(|c| !is_word_char(c));
+        let before_ok = hay[..begin]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_word_char(c));
         let after_ok = hay[end..].chars().next().is_none_or(|c| !is_word_char(c));
         if before_ok && after_ok {
             return true;
@@ -1673,8 +1676,14 @@ mod tests {
             redact_secret_text("Your verification code is 482913"),
             "Your verification code is [redacted]"
         );
-        assert_eq!(redact_secret_text("482 913 is your OTP"), "[redacted] is your OTP");
-        assert_eq!(redact_secret_text("Order 482913 shipped"), "Order 482913 shipped");
+        assert_eq!(
+            redact_secret_text("482 913 is your OTP"),
+            "[redacted] is your OTP"
+        );
+        assert_eq!(
+            redact_secret_text("Order 482913 shipped"),
+            "Order 482913 shipped"
+        );
         assert_eq!(redact_secret_text("Total: 1299 items"), "Total: 1299 items");
         assert_eq!(
             redact_secret_text("Use code 12 to get 10% off"),

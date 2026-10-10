@@ -84,7 +84,8 @@ impl Store {
         }
         let tmp = self.path.with_extension("json.tmp");
         fs::write(&tmp, text).map_err(|e| format!("write {}: {}", tmp.display(), e))?;
-        fs::rename(&tmp, &self.path).map_err(|e| format!("rename {}: {}", self.path.display(), e))?;
+        fs::rename(&tmp, &self.path)
+            .map_err(|e| format!("rename {}: {}", self.path.display(), e))?;
         self.data = Some(next);
         Ok(())
     }
