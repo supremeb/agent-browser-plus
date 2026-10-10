@@ -71,11 +71,14 @@ function extractRows(kind, limit) {
       const row = a.closest('[id^="issue_"], li, [role="listitem"], .js-issue-row') || a.parentElement;
       const author = row && row.querySelector('a[data-hovercard-type="user"], [data-testid="created-by-link"]');
       const time = row && row.querySelector("relative-time, time");
+      const metaText = row ? row.innerText.replace(/\s+/g, " ") : "";
+      // The new list UI renders the author only as text ("by author X opened" or "·X opened").
+      const authorFromMeta = (metaText.match(/(?:by author|·)\s*([A-Za-z0-9-]+)\s+opened/) || [])[1] || null;
       out.push({
         number: Number(m[2]),
         title: label,
         url: a.href,
-        author: author ? author.textContent.trim() : null,
+        author: author ? author.textContent.trim() : authorFromMeta,
         updated: time ? time.getAttribute("datetime") : null,
         labels: row ? Array.from(row.querySelectorAll('a[href*="label%3A"], a[href*="label:"], .IssueLabel')).map((l) => l.textContent.trim()).filter(Boolean) : [],
         meta: row ? row.innerText.replace(/\s+/g, " ").trim().slice(0, 300) : "",
@@ -119,14 +122,18 @@ function readThreadPage() {
     const checkHeading = Array.from(document.querySelectorAll("h3, .status-heading"))
       .map((h) => h.textContent.trim())
       .find((s) => /checks? (have|has|were|was|are)|checks? (passed|failed|pending)|successful checks/i.test(s));
+    const files = document.querySelector("#prs-files-anchor-tab, #files_tab_counter, a[href$='/files'] .Counter");
+    const filesCount = files ? (files.textContent.replace(/[,\s]/g, "").match(/\d+/) || [])[0] : null;
+    const rawTitle = t('[data-testid="issue-title"]|.js-issue-title|h1 bdi|h1');
     return {
-      title: t('[data-testid="issue-title"]|.js-issue-title|h1 bdi|h1'),
-      state: t('[data-testid="header-state"]|.gh-header-meta .State|span.State'),
-      author: t('[data-testid="issue-body-header-author"]|.gh-header-meta .author|.timeline-comment .author'),
+      // The new header appends "#123" to the h1 text.
+      title: rawTitle ? rawTitle.replace(/\s*-?\s*#\d+\s*$/, "").trim() : rawTitle,
+      state: t('[data-component="StateLabel"]|[data-testid="header-state"]|.gh-header-meta .State|span.State'),
+      author: t('[data-testid="issue-body-header-author"]|.gh-header-meta .author|.timeline-comment .author|a.author'),
       body: body ? body.innerText.trim().slice(0, 8000) : "",
       labels: Array.from(document.querySelectorAll('.js-issue-labels a, [data-testid="issue-labels"] a')).map((a) => a.textContent.trim()),
       commentCount: document.querySelectorAll(".timeline-comment, [data-testid='comment-viewer-outer-box']").length,
-      filesChanged: t("#files_tab_counter|a[href$='/files'] .Counter"),
+      filesChanged: filesCount ? Number(filesCount) : null,
       checks: checkHeading || (checks ? checks.innerText.replace(/\s+/g, " ").trim().slice(0, 500) : null),
     };
   }) || {};
