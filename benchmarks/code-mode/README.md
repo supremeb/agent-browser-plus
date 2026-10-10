@@ -72,3 +72,29 @@ Local run on macOS arm64 with a debug build of the CLI, Chrome for Testing, and 
 Invocations (a proxy for agent turns) dropped from 4 to 9 down to 1, output bytes (a proxy for tokens) shrank 24x to 30x, and wall time was 1.5x to 2.7x faster even before counting model latency per turn, which dominates real agent runs.
 
 Numbers vary with hardware, build profile, and Chrome version; rerun the script to reproduce them on your machine.
+
+## Real agent results
+
+The numbers above count CLI invocations. To see what an agent actually does, the same three tasks were given to headless Claude Code (`claude -p --model sonnet`) in four setups, two runs each (24 runs, macOS arm64, release builds, Chrome for Testing). The stock build is upstream agent-browser 0.39.0. Every run produced the correct answer.
+
+| Setup | Avg turns | Avg time (s) | Avg cost ($) | Correct |
+| --- | ---: | ---: | ---: | --- |
+| Stock, MCP tools | 6.3 | 10.3 | 0.168 | 6/6 |
+| Fork, MCP tools (`agent_browser_run`) | 3.5 | 8.5 | 0.106 | 6/6 |
+| Stock, CLI through Bash | 3.5 | 9.8 | 0.158 | 6/6 |
+| Fork, CLI through Bash | 3.7 | 9.4 | 0.152 | 6/6 |
+
+Per task (median of two runs):
+
+| Task | Stock MCP turns | Fork MCP turns | Stock MCP cost | Fork MCP cost |
+| --- | ---: | ---: | ---: | ---: |
+| paginate | 5.0 | 3.5 | 0.163 | 0.112 |
+| find-row | 6.0 | 3.0 | 0.166 | 0.089 |
+| form | 8.0 | 4.0 | 0.176 | 0.117 |
+
+What this shows:
+
+- Over MCP, code mode cuts turns by 44%, cost by 37%, and time by 17%, because one `agent_browser_run` call replaces a chain of typed tool calls.
+- Through the CLI there is no meaningful difference. Agents already chain commands with `&&` in one Bash call, and Claude Code's Bash safety check rejects heredocs that contain braces and quotes, so `run <<'JS'` scripts are often blocked before they execute. Use the MCP tool for code mode in Claude Code.
+- A first round, before the Playwright-style `page` shim existed, showed the fork CLI taking 6 to 13 turns: models wrote `page.goto(...)` by reflex and failed. The shim fixed that.
+- These tasks are small. Savings grow with the number of data-dependent steps (loops over results, multi-page extraction), which is where per-call agents pay one turn per step.
