@@ -66,12 +66,18 @@ function parseCsv(src) {
 const docs = {
   read(docIdOrUrl) {
     const id = parseId(docIdOrUrl);
-    go(`https://docs.google.com/document/d/${id}/edit`, ".kix-appview-editor, .docs-title-input");
+    // View-only and public docs never render the editor chrome, so wait for
+    // the page load only; the export fetch below is what proves access.
+    go(`https://docs.google.com/document/d/${id}/edit`);
+    try { wait({ load: "load" }); } catch (_) {}
     const title = pageCall(() => document.title.replace(/ - Google Docs$/, ""));
     const res = fetchText(`https://docs.google.com/document/d/${id}/export?format=txt`);
     if (res.ok && typeof res.text === "string") return { id, title, text: res.text.replace(/^﻿/, "") };
     // Fallback: the lightweight HTML rendering of the doc.
     go(`https://docs.google.com/document/d/${id}/mobilebasic`, "body");
+    if (/Sign in|You need access|Request access/i.test(String(title))) {
+      throw new AbError(`No access to document ${id}. Log in with --profile or ask the owner to share it.`, "not_found", []);
+    }
     return { id, title, text: text("body") };
   },
   // Types text at the end of the doc. Without confirm, returns a preview only.
