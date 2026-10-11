@@ -111,3 +111,23 @@ A longer task with steps that depend on page data: collect all 30 items across 3
 | Fork, MCP (`agent_browser_run`) | 4.5 | 19.0 | 0.151 |
 
 On the longer task the fork wins through both surfaces: 53% fewer turns and 32% lower cost over MCP, and 38% fewer turns, 22% lower cost and 28% less time through the CLI. Savings grow with the number of steps that depend on page data.
+
+### Baseline: stock agent-browser nudged to use `batch`
+
+Stock agent-browser already has `batch` (and an `agent_browser_batch` MCP tool in the `debug` profile). To separate "batching at all" from "code mode specifically", the same tasks were run on stock with the prompt telling the agent to prefer batch (MCP started with `--tools core,debug`). Two runs per task; every run was correct.
+
+| Setup | Short: turns | Short: cost ($) | Long: turns | Long: time (s) | Long: cost ($) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Stock, CLI | 3.5 | 0.158 | 10.5 | 25.2 | 0.256 |
+| Stock + batch, CLI | 3.7 | 0.274 | 4.5 | 15.6 | 0.177 |
+| Fork, CLI | 3.7 | 0.152 | 6.5 | 18.2 | 0.199 |
+| Stock, MCP | 6.3 | 0.168 | 9.5 | 21.1 | 0.223 |
+| Stock + batch, MCP | 4.3 | 0.149 | 4.5 | 13.9 | 0.186 |
+| Fork, MCP | 3.5 | 0.106 | 4.5 | 19.0 | 0.151 |
+
+What this changes:
+
+- Most of the turn savings come from batching itself. With a nudge, stock `batch` reached the same 4.5 turns as code mode on the long task, and was faster. Through the CLI it beat the fork outright on the long task. Agents used semantic `find` (for example `find role button click --name "Select Row 5"`) so they did not need refs from an earlier snapshot.
+- Code mode's remaining edge is cost and short tasks over MCP: 3.5 vs 4.3 turns and 29% lower cost on short tasks, and 19% lower cost on the long task, mainly because a script returns only its result instead of every command's output.
+- `batch` is faster on the long task because it runs fixed sequences without the per-locator page lookups that code mode's `page` API performs.
+- Code mode still matters where steps depend on page data that `find` cannot express (loops of unknown length, conditional branches, extracting and transforming data), but these benchmark tasks did not isolate that case.

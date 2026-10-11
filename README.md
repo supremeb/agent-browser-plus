@@ -14,16 +14,17 @@ agent-browser runs one action per agent tool call, so a 10-step browser task cos
 
 ## Outcomes
 
-Benchmarked against stock agent-browser 0.39.0 with headless Claude Code (Sonnet). Every run produced the correct answer.
+Benchmarked with headless Claude Code (Sonnet) against stock agent-browser 0.39.0, including stock nudged to use its existing `batch` command. Every run produced the correct answer.
 
-| Task | Setup | Stock turns | Fork turns | Cost change |
-| --- | --- | ---: | ---: | ---: |
-| Long multi-step task | MCP | 9.5 | 4.5 | −32% |
-| Long multi-step task | CLI | 10.5 | 6.5 | −22% |
-| Short tasks | MCP | 6.3 | 3.5 | −37% |
-| Short tasks | CLI | 3.5 | 3.7 | about the same |
+| Setup | Short tasks: turns / cost | Long task: turns / cost |
+| --- | --- | --- |
+| Stock, MCP | 6.3 / $0.168 | 9.5 / $0.223 |
+| Stock + `batch`, MCP | 4.3 / $0.149 | 4.5 / $0.186 |
+| **Fork, MCP (code mode)** | **3.5 / $0.106** | **4.5 / $0.151** |
+| Stock + `batch`, CLI | 3.7 / $0.274 | 4.5 / $0.177 |
+| Fork, CLI | 3.7 / $0.152 | 6.5 / $0.199 |
 
-Without an agent, one `run` call replaced 4 to 9 separate commands with 24x to 30x less output. Per-command speed is the same as upstream. Use code mode through MCP in Claude Code: its Bash safety check blocks scripts passed through the shell. Details are in [benchmarks/code-mode](benchmarks/code-mode/README.md).
+Honest reading: most of the turn savings come from batching, which stock agent-browser already has. Code mode's added value is lower cost (about 19 to 29% below stock with `batch` over MCP, because a script returns only its result), fewer turns on short tasks, and loops or branches that `batch` cannot express. Through the CLI, `batch` did as well or better. Per-command speed is the same as upstream. Details are in [benchmarks/code-mode](benchmarks/code-mode/README.md).
 
 ## Quick start
 
