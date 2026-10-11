@@ -138,6 +138,7 @@ const TOOL_DIFF_SNAPSHOT: &str = "agent_browser_diff_snapshot";
 const TOOL_DIFF_SCREENSHOT: &str = "agent_browser_diff_screenshot";
 const TOOL_DIFF_URL: &str = "agent_browser_diff_url";
 const TOOL_BATCH: &str = "agent_browser_batch";
+const TOOL_RUN: &str = "agent_browser_run";
 const TOOL_REACT_TREE: &str = "agent_browser_react_tree";
 const TOOL_REACT_INSPECT: &str = "agent_browser_react_inspect";
 const TOOL_REACT_RENDERS_START: &str = "agent_browser_react_renders_start";
@@ -262,7 +263,7 @@ impl ToolProfile {
 
     fn description(self) -> &'static str {
         match self {
-            Self::Core => "Everyday browser automation with navigation, snapshots, common interaction, waits, screenshots, basic reads, tab basics, JavaScript eval, close, and profile discovery.",
+            Self::Core => "Everyday browser automation with code mode (agent_browser_run), navigation, snapshots, common interaction, waits, screenshots, basic reads, tab basics, JavaScript eval, close, and profile discovery.",
             Self::Network => "Network interception, request inspection, HAR capture, headers, credentials, and offline mode.",
             Self::State => "Cookies, storage, auth profiles, saved browser state, sessions, Chrome profiles, and bundled skills.",
             Self::Debug => "Console/errors, highlighting, DevTools, tracing, profiling, accessibility audits, PDF, downloads/uploads, recording, clipboard, plugin registry and plugin command.run, doctor, dashboard, install, upgrade, and chat.",
@@ -338,6 +339,7 @@ impl Default for McpConfig {
 
 const CORE_PROFILE_TOOLS: &[&str] = &[
     TOOL_TOOLS_PROFILES,
+    TOOL_RUN,
     TOOL_OPEN,
     TOOL_READ,
     TOOL_SNAPSHOT,
@@ -695,7 +697,7 @@ fn initialize_result(params: Option<&Value>, config: &McpConfig) -> Value {
             "version": env!("CARGO_PKG_VERSION")
         },
         "instructions": format!(
-            "Use the typed agent_browser_* tools to control a browser. Active MCP tools profile(s): {}. Prefer agent_browser_snapshot after navigation to obtain stable element refs before clicking or typing. Use agent_browser_tools_profiles to see available startup profiles.",
+            "Use the typed agent_browser_* tools to control a browser. Active MCP tools profile(s): {}. For any task with more than one or two steps, prefer agent_browser_run: one JavaScript program can navigate, loop, branch, and extract without a model turn per command, and skills.load('<site>') adds site helpers. Prefer agent_browser_snapshot after navigation to obtain stable element refs before clicking or typing. Use agent_browser_tools_profiles to see available startup profiles.",
             config.profile_names().join(", ")
         )
     })
@@ -844,7 +846,8 @@ fn tools() -> Vec<Value> {
                 "selector": { "type": "string", "description": "Scope the snapshot to a CSS selector." },
                 "includeUrls": { "type": "boolean", "default": false, "description": "Include href URLs on links." },
                 "delta": { "type": "boolean", "default": false, "description": "Return full state once, then unchanged or bounded structural deltas. Apply changes to refs and treeChange (zero-based startLine, deleteCount, lines) to the previous tree." },
-                "full": { "type": "boolean", "default": false, "description": "Force full state while updating the delta baseline." }
+                "full": { "type": "boolean", "default": false, "description": "Force full state while updating the delta baseline." },
+                "noRedact": { "type": "boolean", "default": false, "description": "Show password, one-time-code, and card values verbatim. Redaction is on by default." }
             }),
             &[],
         ),
@@ -1610,7 +1613,7 @@ fn parity_tools() -> Vec<Value> {
             TOOL_DIFF_SNAPSHOT,
             "Diff snapshot",
             "Diff current snapshot against last or baseline.",
-            json!({ "baseline": { "type": "string" }, "selector": { "type": "string" }, "compact": { "type": "boolean" }, "depth": { "type": "integer" } }),
+            json!({ "baseline": { "type": "string" }, "selector": { "type": "string" }, "compact": { "type": "boolean" }, "depth": { "type": "integer" }, "noRedact": { "type": "boolean" } }),
             &[],
         ),
         tool(
@@ -1633,6 +1636,16 @@ fn parity_tools() -> Vec<Value> {
             "Run multiple commands sequentially.",
             json!({ "commands": { "type": "array", "items": { "type": "array", "items": { "type": "string" }, "minItems": 1 }, "minItems": 1 }, "bail": { "type": "boolean" } }),
             &["commands"],
+        ),
+        tool(
+            TOOL_RUN,
+            "Run script (code mode)",
+            "Run a JavaScript program that drives the browser in one call. Prefer this for any multi-step task: loops, conditionals, and extraction run without a model turn per step. Globals: a Playwright-style `page` (goto, locator(css, {hasText}), getByRole(role, {name}), getByText, getByLabel, evaluate; locators support click, fill, innerText, inputValue, count, all, nth); ab(...argv) runs any CLI command and returns its JSON data (throws AbError with .code); helpers open, snapshot({interactive, selector, delta}) -> {tree, refs}, click, fill, type, press, text, value, attr, count, evalPage(js), find, wait, screenshot, url, title, sleep; store.get/set persist per session across runs; skills.load('github'|'gmail'|'google-workspace'|'linkedin') returns site helpers; console.log output is returned. Top-level await and return work; the returned value is the result. The script itself has no filesystem, network, or require, but commands it runs through ab() have the same reach as the CLI (screenshot paths, upload, state save). Errors carry .code: timeout, syntax_error, never_settles, blocked_command, confirmation_required (ask the user; scripts cannot confirm), not_logged_in and not_found (site helpers). Site write helpers (send, comment, connect, setCell) only draft unless passed {confirm: true}; get the user's approval first. Read the skill with agent_browser_skills_get before using its helpers. Snapshot values that look like passwords or one-time codes are shown as [redacted].",
+            json!({
+                "code": { "type": "string", "description": "JavaScript source. Use `return value` to produce the result." },
+                "scriptTimeoutMs": { "type": "integer", "minimum": 1, "description": "Script wall-clock budget in milliseconds (default 120000)." }
+            }),
+            &["code"],
         ),
         tool(
             TOOL_REACT_TREE,
@@ -2351,6 +2364,7 @@ fn call_tool(params: Option<&Value>, config: &McpConfig) -> Result<Value, Protoc
         TOOL_DIFF_SCREENSHOT => call_diff_screenshot(arguments),
         TOOL_DIFF_URL => call_diff_url(arguments),
         TOOL_BATCH => call_batch(arguments),
+        TOOL_RUN => call_run(arguments),
         TOOL_REACT_TREE => call_react_tree(arguments),
         TOOL_REACT_INSPECT => call_react_inspect(arguments),
         TOOL_REACT_RENDERS_START => call_react_renders_start(arguments),
@@ -2659,6 +2673,9 @@ fn snapshot_command_args(arguments: &Value) -> Result<Vec<String>, ProtocolError
     }
     if optional_bool(arguments, "full")?.unwrap_or(false) {
         args.push("--full".to_string());
+    }
+    if optional_bool(arguments, "noRedact")?.unwrap_or(false) {
+        args.push("--no-redact".to_string());
     }
 
     Ok(args)
@@ -3337,6 +3354,9 @@ fn call_diff_snapshot(arguments: &Value) -> Result<Value, ProtocolError> {
         args.push("--depth".to_string());
         args.push(depth.to_string());
     }
+    if optional_bool(arguments, "noRedact")?.unwrap_or(false) {
+        args.push("--no-redact".to_string());
+    }
     call_cli_tool(arguments, args, None)
 }
 
@@ -3424,6 +3444,58 @@ fn call_batch(arguments: &Value) -> Result<Value, ProtocolError> {
         .map_err(|e| ProtocolError::invalid_params(format!("commands encode error: {}", e)))?;
     call_cli_tool(arguments, args, Some(stdin))
 }
+
+/// Code mode: the script goes to `agent-browser run` on stdin so it never
+/// appears in process listings, and the process deadline is kept above the
+/// script deadline so the script's own timeout error is what gets reported.
+fn call_run(arguments: &Value) -> Result<Value, ProtocolError> {
+    let (args, arguments, code) = run_tool_invocation(arguments)?;
+    call_cli_tool(&arguments, args, Some(code))
+}
+
+/// Build the `run` argv, the effective tool arguments (with the process
+/// deadline filled in), and the script body for [`call_run`].
+fn run_tool_invocation(arguments: &Value) -> Result<(Vec<String>, Value, String), ProtocolError> {
+    let code = required_string(arguments, "code")?;
+    let script_timeout = optional_u64(arguments, "scriptTimeoutMs")?;
+    if script_timeout == Some(0) {
+        return Err(ProtocolError::invalid_params(
+            "scriptTimeoutMs must be a positive integer",
+        ));
+    }
+    let process_timeout = optional_u64(arguments, "timeoutMs")?;
+
+    // The process deadline must stay above the script deadline, otherwise the
+    // run is killed before it can report its own timeout and partial output.
+    let script_timeout = match (script_timeout, process_timeout) {
+        (Some(script), Some(process)) if process <= script => {
+            return Err(ProtocolError::invalid_params(format!(
+                "timeoutMs ({}) must be greater than scriptTimeoutMs ({}); leave timeoutMs unset to derive it",
+                process, script
+            )))
+        }
+        (Some(script), _) => Some(script),
+        // Only the process deadline given: derive a script budget that ends
+        // inside it, leaving a slice for start-up and reporting.
+        (None, Some(process)) => Some((process - process / 4).max(1)),
+        (None, None) => None,
+    };
+
+    let mut args = vec!["run".to_string()];
+    if let Some(ms) = script_timeout {
+        args.push("--timeout".to_string());
+        args.push(ms.to_string());
+    }
+    let mut arguments = arguments.clone();
+    if process_timeout.is_none() {
+        let budget = script_timeout.unwrap_or(crate::run::DEFAULT_TIMEOUT_MS);
+        arguments["timeoutMs"] = json!(budget.saturating_add(RUN_PROCESS_MARGIN_MS));
+    }
+    Ok((args, arguments, code))
+}
+
+/// Headroom for daemon start-up and browser launch on top of the script budget.
+const RUN_PROCESS_MARGIN_MS: u64 = 30_000;
 
 fn call_react_tree(arguments: &Value) -> Result<Value, ProtocolError> {
     let mut args = vec!["react".to_string(), "tree".to_string()];
@@ -4258,6 +4330,58 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn run_tool_is_in_core_profile_and_requires_code() {
+        let core = tools_for_config(&McpConfig::core());
+        let run = core
+            .iter()
+            .find(|t| t["name"] == TOOL_RUN)
+            .expect("agent_browser_run in core profile");
+        assert_eq!(run["inputSchema"]["required"], json!(["code"]));
+        assert!(run["inputSchema"]["properties"]["scriptTimeoutMs"].is_object());
+        assert!(run["inputSchema"]["properties"]["session"].is_object());
+
+        let err = call_tool(
+            Some(&json!({ "name": TOOL_RUN, "arguments": {} })),
+            &McpConfig::core(),
+        )
+        .unwrap_err();
+        assert!(format!("{:?}", err).contains("code"), "{:?}", err);
+    }
+
+    #[test]
+    fn run_tool_builds_cli_invocation() {
+        let (args, effective, code) = run_tool_invocation(&json!({
+            "code": "return 1",
+            "scriptTimeoutMs": 5000,
+            "session": "s1"
+        }))
+        .unwrap();
+        assert_eq!(args, vec!["run", "--timeout", "5000"]);
+        assert_eq!(code, "return 1");
+        assert_eq!(effective["timeoutMs"], json!(5000 + RUN_PROCESS_MARGIN_MS));
+
+        let cli = cli_tool_args(&effective, args, Some("s1")).unwrap();
+        assert_eq!(cli.first().map(String::as_str), Some("--json"));
+        assert!(cli.windows(2).any(|w| w == ["--session", "s1"]));
+        assert!(cli.ends_with(&[
+            "run".to_string(),
+            "--timeout".to_string(),
+            "5000".to_string()
+        ]));
+
+        let (derived_args, explicit, _) =
+            run_tool_invocation(&json!({ "code": "1", "timeoutMs": 1000 })).unwrap();
+        assert_eq!(explicit["timeoutMs"], json!(1000));
+        assert_eq!(derived_args, vec!["run", "--timeout", "750"]);
+        assert!(run_tool_invocation(
+            &json!({ "code": "1", "timeoutMs": 5000, "scriptTimeoutMs": 5000 })
+        )
+        .is_err());
+
+        assert!(run_tool_invocation(&json!({ "code": "1", "scriptTimeoutMs": 0 })).is_err());
+    }
 
     #[test]
     fn tools_list_contains_typed_tools() {

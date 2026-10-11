@@ -72,6 +72,24 @@ This design solves the version drift problem: the installed SKILL.md rarely chan
 - **vercel-sandbox** — Run agent-browser + headless Chrome inside ephemeral Vercel Sandbox microVMs.
 - **protected-vercel-deployments** — Access and test Vercel deployments behind Vercel Authentication, SSO, or Deployment Protection with short-lived Trusted Sources OIDC tokens.
 - **agentcore** — Run agent-browser on AWS Bedrock AgentCore cloud browsers.
+- **github** — Read repositories, pull requests, issues, code search, and notifications, with a guarded helper for commenting.
+- **gmail** — Read the inbox, run Gmail searches, read threads, and draft or send mail from the logged-in browser.
+- **google-workspace** — Read and edit Google Docs, Sheets, Drive, and Calendar from the logged-in browser.
+- **linkedin** — Help the logged-in user with their own LinkedIn tasks: profile lookups, short people searches, feed, messages, and invitations. Not for bulk scraping or mass outreach.
+
+## Site helpers for code mode
+
+The **github**, **gmail**, **google-workspace**, and **linkedin** skills ship JavaScript helpers that load inside [code mode](/code-mode) with `skills.load(name)`, so one `agent-browser run` script can open several pages and return compact JSON:
+
+```bash
+agent-browser run <<'JS'
+const gh = skills.load("github");
+const prs = gh.listPullRequests("vercel-labs/agent-browser", { limit: 5 });
+return prs.map(p => ({ number: p.number, title: p.title }));
+JS
+```
+
+Helpers that change anything (posting a comment, sending mail, writing a cell, creating an event, sending a message or invitation) only draft unless called with `{ confirm: true }`. GitHub reads work on public repos without logging in. Gmail, Google Workspace, and LinkedIn need a signed in browser: log in once with `--headed --profile <name>`, then pass `--profile <name>` on every call, or attach to your own Chrome with `--auto-connect`. Run `agent-browser skills get <name>` for each skill's full API.
 
 Use `agent-browser skills list` to see all available skills, then `agent-browser skills get <name>` to load one. `agent-browser skills get core --full` is the recommended starting point for most browser tasks.
 

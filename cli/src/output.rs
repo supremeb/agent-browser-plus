@@ -2243,6 +2243,8 @@ Options:
       --delta          Return full state once, then unchanged or structural deltas
                        Deltas include ref changes and an exact treeChange line splice
       --full           Force full state and update the delta baseline
+      --no-redact      Show password, one-time-code, and card values verbatim
+                       (redacted as [redacted] by default)
 
 Global Options:
   --json               Output as JSON
@@ -3453,6 +3455,7 @@ Snapshot Diff:
     -s, --selector <sel>     Scope snapshot to a CSS selector or @ref
     -c, --compact            Use compact snapshot format
     -d, --depth <n>          Limit snapshot tree depth
+        --no-redact          Show password, one-time-code, and card values verbatim
 
   Without --baseline, compares against the last snapshot taken in this session.
 
@@ -3490,6 +3493,61 @@ Examples:
   agent-browser diff screenshot --baseline before.png --output diff.png --threshold 0.2
   agent-browser diff url https://staging.example.com https://prod.example.com
   agent-browser diff url https://v1.example.com https://v2.example.com --screenshot
+"##
+        }
+
+        "run" => {
+            r##"
+agent-browser run - Run a JavaScript program that drives the browser (code mode)
+
+Usage: agent-browser run <file.js>
+       agent-browser run -e '<code>'
+       agent-browser run <<'JS' ... JS
+
+Runs one script in a sandboxed QuickJS runtime. The script reaches the browser
+only through CLI commands, so a single invocation can loop, branch, and pass
+data between steps instead of costing one agent turn per command. Top-level
+await and return work; the returned value is printed (JSON with --json).
+
+Options:
+  -e, --eval <code>    Inline script (otherwise a file path, or stdin)
+  --timeout <ms>       Wall-clock budget for the script (default: 120000)
+  --json               Print {success, result, logs, commands, error, code, command}
+
+Globals:
+  ab(...argv)          Run any CLI command, e.g. ab("get", "text", "#t");
+                       returns its JSON data, throws AbError {message, code, command}
+  open(url) back() forward() reload() url() title()
+  snapshot({interactive, compact, cursor, urls, depth, selector, delta, full, noRedact})
+                       -> {tree, refs, origin, removedRefs}
+  text(sel) html(sel) value(sel) attr(sel, name) count(sel) isVisible(sel)
+  evalPage(js)         Evaluate in the page and return the result
+  click(sel) dblclick fill(sel, text) type press(key) hover focus select check
+  uncheck scroll(dir, px) upload find(...args, {name, exact}) screenshot(path, {full, annotate})
+  wait(ms | selector | {text | url | load | fn})   sleep(ms)
+  store.get/set/delete/keys   JSON values kept per --session across runs
+  skills.load(name)    Site helpers from skill-data/<name>/helpers.js
+                       (github, gmail, google-workspace, linkedin)
+  page                 Playwright-style subset: page.goto, page.locator(css, {hasText}),
+                       getByRole(role, {name}), getByText, getByLabel, .click/.fill/
+                       .innerText/.inputValue/.count/.all/.nth/.first, page.evaluate(fn, arg)
+  result(value)        Set the result without returning
+  console.log/info/warn/error
+
+Sandbox:
+  No filesystem, network, process, or module access. Each run gets a fresh
+  scope (use store to carry data), a memory limit, and the --timeout deadline.
+  run, batch, chat, mcp, dashboard, install, upgrade, confirm, and deny cannot
+  be called from a script, nor can --stdin/--password-stdin. Commands parked by
+  --confirm-actions throw AbError code confirmation_required.
+
+Examples:
+  agent-browser run -e 'await open("https://example.com"); return title()'
+  agent-browser run scrape.js --timeout 300000
+  agent-browser --session work run <<'JS'
+    const gh = skills.load("github");
+    return gh.listPullRequests("vercel-labs/agent-browser", { limit: 5 });
+  JS
 "##
         }
 
@@ -3635,8 +3693,9 @@ browser automation. Use --tools all for the full typed CLI parity surface, or
 combine profiles with commas, such as --tools core,network,react.
 
 Tool profiles:
-  core       Default. Navigation, snapshots, interaction, waits, reads,
-             screenshots, JavaScript eval, close, tab basics, and profile discovery
+  core       Default. Code mode (agent_browser_run), navigation, snapshots,
+             interaction, waits, reads, screenshots, JavaScript eval, close,
+             tab basics, and profile discovery
   network    Network routes, request inspection, HAR, headers, credentials, offline
   state      Cookies, storage, auth, saved state, sessions, profiles, skills
   debug      Console/errors, tracing, profiling, recording, accessibility audits,
@@ -3941,6 +4000,11 @@ Init scripts:
 Batch:
   batch [--bail] ["cmd" ...]  Execute multiple commands sequentially (args or stdin)
                               --bail stops on first error (default: continue all)
+
+Code mode:
+  run <file> | -e <code>      Run a JavaScript program that calls any command with
+                              loops and data flow in one invocation (or stdin)
+                              --timeout <ms> sets the script budget (default 120000)
 
 Auth Vault:
   auth save <name> [opts]    Save auth profile (--url, --username, --password/--password-stdin)

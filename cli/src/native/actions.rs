@@ -5738,6 +5738,10 @@ async fn handle_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
             .and_then(|v| v.as_u64())
             .map(|d| d as usize),
         urls: cmd.get("urls").and_then(|v| v.as_bool()).unwrap_or(false),
+        no_redact: cmd
+            .get("noRedact")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     };
 
     let previous_refs = state.ref_map.ref_ids();
@@ -5754,6 +5758,8 @@ async fn handle_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
 
     let url = mgr.get_url().await.unwrap_or_default();
 
+    // Names in the refs map go through the same redaction as the rendered
+    // tree; the ref_map itself keeps raw names for element matching.
     let refs: serde_json::Map<String, Value> = state
         .ref_map
         .entries_sorted()
@@ -5761,7 +5767,12 @@ async fn handle_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
         .map(|(ref_id, entry)| {
             let mut obj = serde_json::Map::new();
             obj.insert("role".into(), Value::String(entry.role));
-            obj.insert("name".into(), Value::String(entry.name));
+            let name = if options.no_redact {
+                entry.name
+            } else {
+                snapshot::redact_secret_text(&entry.name)
+            };
+            obj.insert("name".into(), Value::String(name));
             (ref_id, Value::Object(obj))
         })
         .collect();
@@ -5790,6 +5801,7 @@ async fn handle_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
         "compact": options.compact,
         "depth": options.depth,
         "urls": options.urls,
+        "noRedact": options.no_redact,
     }))
     .unwrap_or_default();
     let previous = state.snapshot_revisions.get(&session_id).cloned();
@@ -7262,6 +7274,10 @@ async fn handle_diff_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Va
         compact,
         depth: max_depth,
         selector,
+        no_redact: cmd
+            .get("noRedact")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         ..SnapshotOptions::default()
     };
     // Reuse the current document identities without committing a failed capture.

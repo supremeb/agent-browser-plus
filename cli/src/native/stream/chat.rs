@@ -430,6 +430,7 @@ const ALLOWED_COMMANDS: &[&str] = &[
     "swipe",
     "device",
     "batch",
+    "run",
     "diff",
     "find",
     "role",

@@ -26,6 +26,7 @@ export const navigation: NavSection[] = [
       { name: "Plugins", href: "/plugins" },
       { name: "Selectors", href: "/selectors" },
       { name: "Snapshots", href: "/snapshots" },
+      { name: "Code Mode", href: "/code-mode" },
     ],
   },
   {

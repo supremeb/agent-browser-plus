@@ -9,6 +9,7 @@ export const PAGE_TITLES: Record<string, string> = {
   plugins: "Plugins",
   selectors: "Selectors",
   snapshots: "Snapshots",
+  "code-mode": "Code Mode",
   sessions: "Sessions",
   diffing: "Diffing",
   network: "Network",

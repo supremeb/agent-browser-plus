@@ -162,6 +162,54 @@ fn discover_skills(dirs: &[PathBuf]) -> Vec<SkillInfo> {
     skills
 }
 
+/// Read `helpers.js` for the named skill so code mode (`agent-browser run`)
+/// can expose it through `skills.load(name)`. Names are restricted to
+/// lowercase letters, digits, and hyphens so they can never escape a skills
+/// directory.
+pub fn helpers_source(name: &str) -> Result<String, String> {
+    helpers_source_in(&find_skills_dirs(), name)
+}
+
+fn helpers_source_in(dirs: &[PathBuf], name: &str) -> Result<String, String> {
+    let valid = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !valid {
+        return Err(format!(
+            "Invalid skill name '{}': use lowercase letters, digits, and hyphens",
+            name
+        ));
+    }
+
+    let skills = discover_skills(dirs);
+    let Some(skill) = skills.iter().find(|s| s.name == name) else {
+        let with_helpers: Vec<&str> = skills
+            .iter()
+            .filter(|s| s.dir.join("helpers.js").is_file())
+            .map(|s| s.name.as_str())
+            .collect();
+        return Err(format!(
+            "Skill '{}' not found. Skills with helpers: {}",
+            name,
+            if with_helpers.is_empty() {
+                "none".to_string()
+            } else {
+                with_helpers.join(", ")
+            }
+        ));
+    };
+
+    let helpers = skill.dir.join("helpers.js");
+    if !helpers.is_file() {
+        return Err(format!(
+            "Skill '{}' has no helpers.js. Read it with `agent-browser skills get {}` instead.",
+            name, name
+        ));
+    }
+    fs::read_to_string(&helpers).map_err(|e| format!("Failed to read {}: {}", helpers.display(), e))
+}
+
 fn truncate_description(desc: &str, max_len: usize) -> String {
     if desc.len() <= max_len {
         return desc.to_string();
@@ -490,6 +538,36 @@ pub fn run_skills(args: &[String], json_mode: bool) {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn helpers_source_reads_helpers_js() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_skill(tmp.path(), "site", "Site helpers");
+        fs::write(tmp.path().join("site/helpers.js"), "module.exports = {};").unwrap();
+        let src = helpers_source_in(&[tmp.path().to_path_buf()], "site").unwrap();
+        assert_eq!(src, "module.exports = {};");
+    }
+
+    #[test]
+    fn helpers_source_errors_are_actionable() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_skill(tmp.path(), "plain", "No helpers");
+        create_test_skill(tmp.path(), "site", "Site helpers");
+        fs::write(tmp.path().join("site/helpers.js"), "").unwrap();
+        let dirs = [tmp.path().to_path_buf()];
+
+        let missing = helpers_source_in(&dirs, "nope").unwrap_err();
+        assert!(missing.contains("not found"), "{missing}");
+        assert!(missing.contains("site"), "{missing}");
+
+        let no_helpers = helpers_source_in(&dirs, "plain").unwrap_err();
+        assert!(no_helpers.contains("has no helpers.js"), "{no_helpers}");
+
+        for bad in ["../site", "Site", "", "a/b"] {
+            let err = helpers_source_in(&dirs, bad).unwrap_err();
+            assert!(err.contains("Invalid skill name"), "{bad}: {err}");
+        }
+    }
 
     fn create_test_skill(dir: &Path, name: &str, description: &str) {
         let skill_dir = dir.join(name);

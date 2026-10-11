@@ -10,6 +10,7 @@
     "plugins",
     "selectors",
     "snapshots",
+    "code-mode",
     "---Features---",
     "sessions",
     "dashboard",

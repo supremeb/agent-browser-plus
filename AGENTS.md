@@ -17,10 +17,12 @@ This project uses **pnpm**. Always use `pnpm` instead of `npm` or `yarn` for ins
 
 Do not hard-wrap prose in documentation files such as Markdown, MDX, and READMEs; let the editor or renderer wrap text naturally.
 
+`docs/solutions/` holds documented solutions to past problems (bugs, best practices, architecture and workflow patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas. `CONCEPTS.md` holds shared domain vocabulary.
+
 When adding or changing user-facing features (new flags, commands, behaviors, environment variables, etc.), update **all** of the following:
 
 1. `cli/src/output.rs` — `--help` output (flags list, examples, environment variables)
-2. `README.md` — Options table, relevant feature sections, examples
+2. `README.upstream.md` — Options table, relevant feature sections, examples (`README.md` is a short fork overview)
 3. `skill-data/core/SKILL.md` (and its `references/`) — so AI agents know about the feature when they load the core skill. Edit `skill-data/core/SKILL.md` for overview/workflow changes; edit `skill-data/core/references/*.md` for detailed reference content. Do **not** put feature content in `skills/agent-browser/SKILL.md` — that file is an intentionally thin discovery stub for `npx skills add` and exists only to redirect agents to `agent-browser skills get core`.
 4. `docs/content/docs/` — the Geistdocs site (MDX pages); routing and API handlers live in `docs/src/app/`
 5. Inline doc comments in the relevant source files

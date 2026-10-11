@@ -158,6 +158,7 @@ pub fn is_top_level_command(value: &str) -> bool {
             | "device"
             | "diff"
             | "batch"
+            | "run"
             | "react"
             | "vitals"
             | "web-vitals"
@@ -177,6 +178,66 @@ pub fn is_top_level_command(value: &str) -> bool {
             | "chat"
             | "webmcp"
     )
+}
+
+/// Parse `run [file] [-e <code>] [--timeout <ms>]`. With neither a file nor
+/// `-e`, the script is read from stdin.
+fn parse_run(rest: &[&str], id: &str) -> Result<Value, ParseError> {
+    const RUN_USAGE: &str = "run [file] [-e <code>] [--timeout <ms>]";
+    let mut cmd = json!({ "id": id, "action": "run" });
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "-e" | "--eval" => {
+                let code = rest
+                    .get(i + 1)
+                    .ok_or_else(|| ParseError::MissingArguments {
+                        context: "run -e".to_string(),
+                        usage: RUN_USAGE,
+                    })?;
+                cmd["code"] = json!(code);
+                i += 1;
+            }
+            "--timeout" => {
+                let raw = rest
+                    .get(i + 1)
+                    .ok_or_else(|| ParseError::MissingArguments {
+                        context: "run --timeout".to_string(),
+                        usage: RUN_USAGE,
+                    })?;
+                let ms = raw
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|ms| *ms > 0)
+                    .ok_or_else(|| ParseError::InvalidValue {
+                        message: format!(
+                            "Invalid --timeout value: {} (expected milliseconds > 0)",
+                            raw
+                        ),
+                        usage: RUN_USAGE,
+                    })?;
+                cmd["timeoutMs"] = json!(ms);
+                i += 1;
+            }
+            "-" if cmd.get("file").is_none() && cmd.get("code").is_none() => {
+                // Explicit stdin, same as passing no source.
+            }
+            arg if !arg.starts_with('-')
+                && cmd.get("file").is_none()
+                && cmd.get("code").is_none() =>
+            {
+                cmd["file"] = json!(arg);
+            }
+            other => {
+                return Err(ParseError::InvalidValue {
+                    message: format!("Unexpected argument for run: {}", other),
+                    usage: RUN_USAGE,
+                })
+            }
+        }
+        i += 1;
+    }
+    Ok(cmd)
 }
 
 /// Parse a cookies file in one of three auto-detected formats:
@@ -949,6 +1010,9 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                     "--full" => {
                         obj.insert("full".to_string(), json!(true));
                         obj.insert("delta".to_string(), json!(true));
+                    }
+                    "--no-redact" => {
+                        obj.insert("noRedact".to_string(), json!(true));
                     }
                     _ => {}
                 }
@@ -1975,6 +2039,9 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
             Ok(cmd)
         }
 
+        // === Code mode ===
+        "run" => parse_run(&rest, &id),
+
         // === React (requires `open --enable react-devtools`) ===
         "react" => parse_react(&rest, &id),
 
@@ -2635,6 +2702,9 @@ fn parse_diff(rest: &[&str], id: &str) -> Result<Value, ParseError> {
                                 usage: "diff snapshot --selector <sel>",
                             });
                         }
+                    }
+                    "--no-redact" => {
+                        obj.insert("noRedact".to_string(), json!(true));
                     }
                     "-c" | "--compact" => {
                         obj.insert("compact".to_string(), json!(true));
@@ -3575,6 +3645,44 @@ pub fn shell_words_split(s: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn parse_run_sources_and_timeout() {
+        let parse = |a: &[&str]| parse_command(&args(&a.join(" ")), &default_flags());
+        let inline = parse_command(
+            &["run".to_string(), "-e".to_string(), "return 1".to_string()],
+            &default_flags(),
+        )
+        .unwrap();
+        assert_eq!(inline["action"], "run");
+        assert_eq!(inline["code"], "return 1");
+
+        let file = parse(&["run", "script.js", "--timeout", "5000"]).unwrap();
+        assert_eq!(file["file"], "script.js");
+        assert_eq!(file["timeoutMs"], 5000);
+
+        let stdin = parse(&["run"]).unwrap();
+        assert!(stdin.get("file").is_none() && stdin.get("code").is_none());
+
+        assert!(parse(&["run", "--timeout", "0"]).is_err());
+        assert!(parse(&["run", "--timeout"]).is_err());
+        assert!(parse(&["run", "-e"]).is_err());
+        assert!(parse(&["run", "a.js", "b.js"]).is_err());
+        assert!(parse(&["run", "--bogus"]).is_err());
+        assert!(parse(&["run", "-"]).unwrap().get("file").is_none());
+        assert!(parse(&["run", "a.js", "-"]).is_err());
+    }
+
+    #[test]
+    fn no_redact_flag_parses_for_snapshot_and_diff() {
+        let snap = parse_command(&args("snapshot -i --no-redact"), &default_flags()).unwrap();
+        assert_eq!(snap["noRedact"], true);
+        let diff = parse_command(&args("diff snapshot --no-redact"), &default_flags()).unwrap();
+        assert_eq!(diff["noRedact"], true);
+        let plain = parse_command(&args("snapshot -i"), &default_flags()).unwrap();
+        assert!(plain.get("noRedact").is_none());
+    }
+
     use super::*;
 
     fn default_flags() -> Flags {

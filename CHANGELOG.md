@@ -1,5 +1,18 @@
 # agent-browser
 
+## Unreleased (agent-browser-plus)
+
+### New Features
+
+- **Code mode** - Added `agent-browser run <file.js>` (also `run -e '<code>'` and stdin) to execute one JavaScript program that drives the browser in an embedded QuickJS sandbox. Every `ab()` call goes through the same command path as `batch`. Includes helpers for navigation, snapshots, reads, interaction, and waits, a per-session JSON `store`, `skills.load(name)`, `--timeout <ms>` (default 120000), and `--json` output with `result`, `logs`, `commands`, and error `code`
+- **MCP `agent_browser_run` tool** - Code mode for MCP clients in the default `core` profile, with `code` and optional `scriptTimeoutMs`. The server instructions now recommend it for multi-step tasks
+- **Site skills with code mode helpers** - Added `github`, `gmail`, `google-workspace` (Docs, Sheets, Drive, Calendar), and `linkedin` skills. Mutating helpers only draft unless called with `{ confirm: true }`
+- **Code mode benchmark** - Added `benchmarks/code-mode/` comparing one command per turn against a single `run` script
+
+### Improvements
+
+- **Snapshot secret redaction** - Snapshots now show `[redacted]` for values of password, one-time code, 2FA, CVV, card number, SSN, PIN, token, and API key fields, and for 4 to 8 digit codes next to words like "code" or "OTP" in page text. Opt out with `snapshot --no-redact`, `diff snapshot --no-redact`, MCP `noRedact: true`, or `snapshot({ noRedact: true })` in code mode
+
 ## 0.39.0
 
 <!-- release:start -->
